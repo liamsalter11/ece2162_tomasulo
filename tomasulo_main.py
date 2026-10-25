@@ -1,12 +1,34 @@
 import json
 
 
+class ReservationStation:
+    def __init__(self, name):
+        self.name = name
+        self.busy = False
+        self.op = None
+        self.vj = None
+        self.vk = None
+        self.qj = None
+        self.qk = None
+        self.a = None
+
+
 class Input:
     def __init__(self, num_rs, ex_cycles, mem_cycles, num_fus):
         self.num_rs = num_rs
         self.ex_cycles = ex_cycles
         self.mem_cycles = mem_cycles
         self.num_fus = num_fus
+        self.reservation_stations = [
+            ReservationStation(f"RS{i}") for i in range(num_rs)
+        ]
+
+
+    def get_available_rs(self):
+        for i, rs in enumerate(self.reservation_stations):
+            if not rs.busy:
+                return i, rs
+        return None
 
 
 class IntegerInput(Input):
@@ -30,10 +52,10 @@ class LSInput(Input):
 
 
 class Instruction:
-    def __init__(self, instruction_str, issue_cycle):
+    def __init__(self, instruction_str, pc):
         self.instruction_str = str(instruction_str)
-        self.issue_cycle = issue_cycle
 
+        self.issue_cycle = None
         self.execution_start_cycle = None
         self.execution_end_cycle = None
         self.memory_access_start_cycle = None
@@ -44,13 +66,14 @@ class Instruction:
         self.opcode = None
         self.operands = []
         self.parse_instruction()
-        self.pc = issue_cycle * 4
+        self.pc = pc
         self.fu_type = self.get_fu_type()
         self.target_register = self.get_target_register()
         self.source_registers = self.get_source_registers()
         self.immediate_value = self.get_immediate_value()
         self.rob_entry = None
         self.rs_entry = None
+
 
     def get_immediate_value(self):
         if self.opcode in ["addi", "beq", "bne"]:
@@ -60,22 +83,29 @@ class Instruction:
         else:
             return None
 
+
     def get_source_registers(self):
         if self.opcode in ["add", "add.d", "sub", "sub.d", "mult.d"]:
             return [self.operands[1], self.operands[2]]
         elif self.opcode in ["addi", "beq", "bne"]:
             return [self.operands[1]]  # Immediate value is not a register
         elif self.opcode in ["ld"]:
-            return [self.operands[1].split('(')[1].rstrip(')')]  # Base register from offset(base)
+            return [
+                self.operands[1].split('(')[1].rstrip(')')
+            ]  # Base register from offset(base)
         elif self.opcode in ["sd"]:
-            return [self.operands[0], self.operands[1].lstrip('(').rstrip(')')]  # Source register and base register
+            return [
+                self.operands[0], self.operands[1].lstrip('(').rstrip(')')
+            ]  # Source register and base register
         else:
             return []
+
 
     def get_target_register(self):
         if self.opcode not in ["sd", "nop", "beq", "bne"]:
             return self.operands[0]
         return None
+
 
     def get_fu_type(self):
         integer_instructions = ["add", "addi", "sub"]
@@ -97,18 +127,22 @@ class Instruction:
         else: # int and branch instructions
             return "integer"
 
+
     def parse_instruction(self):
         parts = self.instruction_str.lower().split()
         if len(parts) > 0:
             self.opcode = parts[0]
             self.operands = [operand.strip(',') for operand in parts[1:]]
 
+
     def print_debug(self):
         print(f"Instruction: {self.instruction_str}")
         print(f"  Issue Cycle: {self.issue_cycle}")
         print(f"  Execution Start Cycle: {self.execution_start_cycle}")
         print(f"  Execution End Cycle: {self.execution_end_cycle}")
-        print(f"  Memory Access Start Cycle: {self.memory_access_start_cycle}")
+        print(
+            f"  Memory Access Start Cycle: {self.memory_access_start_cycle}"
+        )
         print(f"  Memory Access End Cycle: {self.memory_access_end_cycle}")
         print(f"  Write Back Cycle: {self.write_back_cycle}")
         print(f"  Commit Cycle: {self.commit_cycle}")
@@ -119,19 +153,6 @@ class Instruction:
         print(f"  Target Register: {self.target_register}")
         print(f"  Source Registers: {self.source_registers}")
         print(f"  Immediate Value: {self.immediate_value}")
-
-
-class ReservationStation:
-    def __init__(self, name):
-        self.name = name
-        self.busy = False
-        self.op = None
-        self.vj = None
-        self.vk = None
-        self.qj = None
-        self.qk = None
-        self.a = None
-        self.instruction = None
 
 
 class tomasula_simulator:
@@ -154,62 +175,131 @@ class tomasula_simulator:
         self.rob_entries = 0
         self.cdb_buffer_entries = 0
 
+
     def load_instructions(self, instructions):
-        self.instructions = [Instruction(instr, issue_cycle=i) for i, instr in enumerate(instructions)]
+        self.instructions = [
+            Instruction(instr, i * 4) for i, instr in enumerate(instructions)
+        ]
+
 
     def load_memory(self, mem_contents):
         self.memory = mem_contents
+
 
     def load_config(self, config):
         self.rob_entries = config["rob_entries"]
         self.cdb_buffer_entries = config["cdb_buffer_entries"]
         for fu_type, cfg in config["functional_units"].items():
             if fu_type in self.input_cfg:
-                self.input_cfg[fu_type].num_rs = cfg.get("num_rs", self.input_cfg[fu_type].num_rs)
-                self.input_cfg[fu_type].ex_cycles = cfg.get("ex_cycles", self.input_cfg[fu_type].ex_cycles)
-                self.input_cfg[fu_type].mem_cycles = cfg.get("mem_cycles", self.input_cfg[fu_type].mem_cycles)
-                self.input_cfg[fu_type].num_fus = cfg.get("num_fus", self.input_cfg[fu_type].num_fus)
-    
+                self.input_cfg[fu_type].num_rs = cfg.get(
+                    "num_rs", self.input_cfg[fu_type].num_rs
+                )
+                self.input_cfg[fu_type].ex_cycles = cfg.get(
+                    "ex_cycles", self.input_cfg[fu_type].ex_cycles
+                )
+                self.input_cfg[fu_type].mem_cycles = cfg.get(
+                    "mem_cycles", self.input_cfg[fu_type].mem_cycles
+                )
+                self.input_cfg[fu_type].num_fus = cfg.get(
+                    "num_fus", self.input_cfg[fu_type].num_fus
+                )
+
+
     def issue(self):
         next_instruction = self.instructions[0] if self.instructions else None
         if not next_instruction:
             return
         instruction_type = next_instruction.fu_type
-        if self.input_cfg[instruction_type].num_rs > 0:
+        available_rs = self.input_cfg[instruction_type].get_available_rs()
+        if available_rs is not None:
+            rs_index, rs = available_rs
             self.active_instructions.append(self.instructions.pop(0))
-            self.input_cfg[instruction_type].num_rs -= 1
+            self.active_instructions[-1].rs_entry = rs_index
+            self.active_instructions[-1].issue_cycle = self.clock
+
 
     def execute(self):
-        # Implement the execute logic here
-        pass
+        if not self.active_instructions:
+            return
+
+        for i, instruction in enumerate(self.active_instructions):
+            if (
+                self.input_cfg[instruction.fu_type].num_fus <= 0
+                or self.input_cfg[instruction.fu_type].ex_cycles <= 0
+            ):
+                continue  # Skip if no functional units or execution cycles are defined
+            if instruction.execution_start_cycle is None:
+                self.active_instructions[i].execution_start_cycle = self.clock
+            elif (
+                instruction.execution_end_cycle is None
+                and self.clock - instruction.execution_start_cycle
+                >= self.input_cfg[instruction.fu_type].ex_cycles
+            ):
+                self.active_instructions[i].execution_end_cycle = self.clock
+
 
     def memory_access(self):
-        # Implement the memory access logic here
-        pass
+        if not self.active_instructions:
+            return
+
+        for i, instruction in enumerate(self.active_instructions):
+            if (
+                instruction.fu_type != "load_store"
+                or self.input_cfg[instruction.fu_type].mem_cycles <= 0
+            ):
+                continue  # Skip if not a load/store instruction
+            if instruction.memory_access_start_cycle is None:
+                self.active_instructions[i].memory_access_start_cycle = self.clock
+            elif (
+                instruction.memory_access_end_cycle is None
+                and self.clock - instruction.memory_access_start_cycle
+                >= self.input_cfg[instruction.fu_type].mem_cycles
+            ):
+                self.active_instructions[i].memory_access_end_cycle = self.clock
+
 
     def write_back(self):
-        # Implement the write back logic here
-        pass
+        if not self.active_instructions:
+            return
+
+        for i, instruction in enumerate(self.active_instructions):
+            if (
+                ((instruction.execution_end_cycle is not None)
+                or (
+                    instruction.memory_access_end_cycle is not None
+                    and instruction.opcode == "ld")
+                ) and instruction.write_back_cycle is None
+            ):
+                self.active_instructions[i].write_back_cycle = self.clock
+
 
     def commit(self):
-        # Implement the commit logic here
+        if not self.active_instructions:
+            return
 
-        # TODO: Remove this later
-        if self.instructions:
-            self.instructions[0].print_debug()
-            self.instructions.pop(0)
-        if self.active_instructions:
-            self.active_instructions[0].print_debug()
-            self.active_instructions.pop(0)
+        for i, instruction in enumerate(self.active_instructions):
+            if (
+                (
+                    instruction.write_back_cycle is not None
+                    or instruction.opcode in ["sd"])
+                and instruction.commit_cycle is None
+            ):
+                self.active_instructions[i].commit_cycle = self.clock
+                self.completed_instructions.append(
+                    self.active_instructions.pop(i)
+                )
+                break  # Commit one instruction per cycle
+
 
     def run(self):
-        while self.instructions or self.active_instructions:
+        while (self.instructions or self.active_instructions) and self.clock < 100:
             self.clock += 1
             self.commit()
             self.write_back()
             self.memory_access()
             self.execute()
             self.issue()
+
 
     def print_debug(self):
         print(f"Clock Cycle: {self.clock}")
@@ -243,7 +333,9 @@ if __name__ == "__main__":
                 continue
             split_line = line.strip().split()
             for entry in split_line:
-                mem_contents.append(float(entry) if '.' in entry else int(entry))
+                mem_contents.append(
+                    float(entry) if '.' in entry else int(entry)
+                )
     with open('default_config.json', 'r') as f:
         config = json.load(f)
 
