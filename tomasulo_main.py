@@ -264,8 +264,10 @@ class tomasula_simulator:
 
         for i, instruction in enumerate(self.active_instructions):
             if (
-                ((instruction.execution_end_cycle is not None)
-                or (
+                ((
+                    instruction.execution_end_cycle is not None
+                    and instruction.opcode != "ld"
+                ) or (
                     instruction.memory_access_end_cycle is not None
                     and instruction.opcode == "ld")
                 ) and instruction.write_back_cycle is None
@@ -277,18 +279,19 @@ class tomasula_simulator:
         if not self.active_instructions:
             return
 
-        for i, instruction in enumerate(self.active_instructions):
-            if (
-                (
-                    instruction.write_back_cycle is not None
-                    or instruction.opcode in ["sd"])
-                and instruction.commit_cycle is None
-            ):
-                self.active_instructions[i].commit_cycle = self.clock
-                self.completed_instructions.append(
-                    self.active_instructions.pop(i)
-                )
-                break  # Commit one instruction per cycle
+        instruction = self.active_instructions[0]
+
+        if (
+            (
+                instruction.write_back_cycle is not None
+                or instruction.opcode in ["sd"]
+            )
+            and instruction.commit_cycle is None
+        ):
+            self.active_instructions[0].commit_cycle = self.clock
+            self.completed_instructions.append(
+                self.active_instructions.pop(0)
+            )
 
 
     def run(self):
