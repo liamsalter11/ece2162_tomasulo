@@ -1,7 +1,7 @@
 import csv
 from pathlib import Path
 from typing import Final, assert_never
-
+import arch
 
 # ISA table order in P1-description.pdf, pages 2-3.
 OPCODES: Final[dict[str, int]] = {
@@ -20,18 +20,23 @@ OPCODES: Final[dict[str, int]] = {
 
 OPERAND_TYPES: Final[dict[str, int]] = {"none": 0, "R": 1, "F": 2}
 
+type StageState = int | list[StageState] | tuple[StageState, ...]
+
 
 class Testbench:
     def __init__(self) -> None:
-        clock_counter: int = 0
+        self.module: arch.Arch
+        self.clock_counter: int = 0
         self.filename: str = ""
         self.instructions: list[list[int | tuple[int, int]]] = []
+        self.inst_prog: int = 0
         self.mem: list[float] = []
         self.rr: list[int] = []
         self.rf: list[float] = []
         self.exp_mem: list[float] = []
         self.exp_rr: list[int] = []
         self.exp_rf: list[float] = []
+        self.ret: list[list[StageState]] = []
         self.ret_mem: list[float] = []
         self.ret_rr: list[int] = []
         self.ret_rf: list[float] = []
@@ -117,9 +122,52 @@ class Testbench:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8-sig", newline="") as csv_file:
             csv.writer(csv_file).writerows(rows)
+    
+    def running(self):
+        if self.clock_counter==0 | self.ret[self.clock_counter][0]==True:
+            self.clock_counter = self.clock_counter + 1
+            self.ret[self.clock_counter] = self.module(rising_edge = True)
+        else:
+            self.ret[self.clock_counter] = self.module(rising_edge = False)
+
+    def ret_to_trace(self) -> None:
+        self.ret_trace = [[0] * 8 for _ in self.instructions]
+        previous: list[set[int]] = [set() for _ in range(5)]
+        finished: list[set[int]] = [set() for _ in range(5)]
+        for clock, record in enumerate(self.ret[1:], start=1):
+            if not record:
+                continue
+            for stage, (start, end) in enumerate(((0, 0), (1, 2), (3, 4), (5, 5), (6, 7))):
+                active: set[int] = set()
+                pending: list[StageState] = [record[stage + 1]]
+                while pending:
+                    value = pending.pop()
+                    match value:
+                        case int():
+                            if value >= 0:
+                                active.add(value)
+                        case list() | tuple():
+                            pending.extend(value)
+                        case _:
+                            assert_never(value)
+                finished[stage].update(previous[stage] - active)
+                for instruction in active - finished[stage]:
+                    trace = self.ret_trace[instruction]
+                    if trace[start] == 0:
+                        trace[start] = clock
+                    if end != start:
+                        trace[end] = clock
+                previous[stage] = active
+
+    def post_proc(self) -> None:
+        self.ret_mem = self.module.mem
+        self.ret_rr = self.module.reg_r
+        self.ret_rf = self.module.reg_f
+        self.ret_to_trace()
 
 
 if __name__ == "__main__":
-    testbench = Testbench()
-    testbench.csv_loader("cat_1.csv")
-    print(f"Loaded {len(testbench.instructions)} instructions from cat_1.csv")
+    tb = Testbench()
+    tb.csv_loader("cat_1.csv")
+    tb.module = arch.Arch(tb.instructions, tb.mem, tb.rr, tb.rf)
+    print(f"Loaded {len(tb.instructions)} instructions from cat_1.csv")
