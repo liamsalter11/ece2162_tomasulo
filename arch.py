@@ -109,16 +109,19 @@ class Arch:
     def tomasulo(self, edge: bool):
         if not edge:
             return 
+        
+        addi_idx: bool = False
         for i in range(2):
             if self.tm_ret[0][i][0] == True:
                 # pending. wait for consume result
                 continue
             if self.tm_rs[0][i][1] == False:
-                if (self.tm_rs[0][i][3][0] == True and self.tm_rs[0][i][4][0] == True):
+                if (addi_idx == False and self.tm_rs[0][i][3][0] == True and self.tm_rs[0][i][4][0] == True):
                     # start cal
                     self.tm_rs[0][i][1] = True
                     self.tm_ret[0][i] = [False, 0]
                     self.tm_count[0][i] = 1
+                    addi_idx = True
                 else:
                     # wait for inst
                     self.tm_count[0][i] = 0
@@ -136,16 +139,18 @@ class Arch:
                 self.tm_rs[0][i][3:5] = [[False, 0], [False, 0]]
 
 
+        addd_idx: bool = False
         for i in range(3):
             if self.tm_ret[1][i][0] == True:
                 # pending. wait for consume result
                 continue
             if self.tm_rs[1][i][1] == False:
-                if (self.tm_rs[1][i][3][0] == True and self.tm_rs[1][i][4][0] == True):
+                if (addd_idx==False and self.tm_rs[1][i][3][0] == True and self.tm_rs[1][i][4][0] == True):
                     # start cal
                     self.tm_rs[1][i][1] = True
                     self.tm_ret[1][i] = [False, 0]
                     self.tm_count[1][i] = 1
+                    addd_idx = True
                 else:
                     # wait for inst
                     self.tm_count[1][i] = 0
@@ -162,16 +167,18 @@ class Arch:
                                         else [True, self.tm_rs[1][i][3][1] - self.tm_rs[1][i][4][1]] 
                 self.tm_rs[1][i][3:5] = [[False, 0], [False, 0]]
 
+        muld_idx:bool = False
         for i in range(2):
             if self.tm_ret[2][i][0] == True:
                 # pending. wait for consume result
                 continue
             if self.tm_rs[2][i][1] == False:
-                if (self.tm_rs[2][i][3][0] == True and self.tm_rs[2][i][4][0] == True):
+                if (muld_idx==False and self.tm_rs[2][i][3][0] == True and self.tm_rs[2][i][4][0] == True):
                     # start cal
                     self.tm_rs[2][i][1] = True
                     self.tm_ret[2][i] = [False, 0]
                     self.tm_count[2][i] = 1
+                    muld_idx = True
                 else:
                     # wait for inst
                     self.tm_count[2][i] = 0
