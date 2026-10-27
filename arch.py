@@ -34,6 +34,7 @@ class Arch:
         
         self.mem_inst: int = -1
         self.mem_inst_pending: int = -1
+        self.mem_rs: tuple[int, int] = (-1, -1)
         self.mem_done:  bool = True
         self.mem_done_prev: bool = True
         self.mem_cycles: int = 4
@@ -41,6 +42,8 @@ class Arch:
 
         self.wb_inst: int = -1
         self.wb_inst_pending: int = -1
+        self.wb_rs: tuple[int, int] = (-1, -1)
+        self.wb_value: int | float = 0
         self.wb_done:  bool = True
         self.wb_done_prev: bool = True
 
@@ -197,10 +200,23 @@ class Arch:
         return self.mem_count >= cycles
 
     def write_back(self, edge: bool, inst: int) -> bool:
-        """Finish one WB cycle after module accepts a completed MEM result."""
+        """Receive the selected result once and hold its value for COMMIT."""
         if not edge:
             return self.wb_done
-        return inst != -1
+        if inst == -1:
+            return False
+        if self.wb_done == True:
+            return True
+
+        group, slot = self.wb_rs
+        if group == -1:
+            return False
+        if self.tm_ret[group][slot][0] == False:
+            return False
+
+        self.wb_value = self.tm_ret[group][slot][1]
+        self.tm_ret[group][slot][0] = False
+        return True
 
     def commit(self, edge: bool, inst: int) -> bool:
         """Finish one COMMIT cycle after module accepts a completed WB result."""
@@ -211,6 +227,10 @@ class Arch:
     def module(self, rising_edge):
         if rising_edge == True:
             _, ex_done, ex_done_id = self.stat_ex(self.is_inst)
+            if self.wb_done_prev == True and self.wb_rs != (-1, -1):
+                group, slot = self.wb_rs
+                self.tm_rs[group][slot][0] = False
+                self.wb_rs = (-1, -1)
             if (self.commit_done_prev==True):
                 self.commit_inst=-1
             if(self.wb_done_prev==True and self.commit_inst==-1):
@@ -219,11 +239,15 @@ class Arch:
                 self.commit_done_prev=False
             if(self.mem_done_prev==True and self.wb_inst==-1):
                 self.wb_inst = self.mem_inst
+                self.wb_rs = self.mem_rs
                 self.mem_inst = -1
+                self.mem_rs = (-1, -1)
+                self.wb_done=False
                 self.wb_done_prev=False
             if(ex_done==True and self.mem_inst==-1):
                 group, slot = ex_done_id
                 self.mem_inst = self.ex_inst[group][slot]
+                self.mem_rs = ex_done_id
                 self.ex_inst[group][slot] = -1
                 self.mem_done_prev=False
                 self.mem_count = 0
