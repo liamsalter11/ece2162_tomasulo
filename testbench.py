@@ -79,6 +79,10 @@ class Testbench:
             [int(value) if value else 0 for value in row[4:12]]
             for row in instruction_rows
         ]
+        self.inst_text = [
+            f"{row[0]} {', '.join(operand for operand in row[1:4] if operand)}"
+            for row in instruction_rows
+        ]
         self.ret_trace = []
         self.filename = path.name
 
@@ -123,6 +127,27 @@ class Testbench:
         with path.open("w", encoding="utf-8-sig", newline="") as csv_file:
             csv.writer(csv_file).writerows(rows)
 
+    def print_report(self):
+        span = lambda start, end: str(start) if start == end else f"{start}-{end}"
+        print(f"===== {self.filename} =====")
+
+        print(f"{'':24}{'ISSUE':>8}{'EX':>8}{'MEM':>8}{'WB':>8}{'COMMIT':>8}")
+        for text, t in zip(self.inst_text, self.ret_trace):
+            cells = [t[0], span(t[1], t[2]), span(t[3], t[4]), t[5], span(t[6], t[7])]
+            print(f"{text:24}" + "".join(f"{cell:>8}" for cell in cells))
+
+        print("\nREGISTER VALUES")
+        for i in range(0, 32, 8):
+            print("  ".join(f"R{j}={self.ret_rr[j]}" for j in range(i, i + 8)))
+        for i in range(0, 32, 8):
+            print("  ".join(f"F{j}={self.ret_rf[j]:g}" for j in range(i, i + 8)))
+
+        print("\nNON-ZERO MEMORY VALUES")
+        print("  ".join(f"[{4 * i}]={v:g}" for i, v in enumerate(self.ret_mem) if v) or "(none)")
+        passed = (self.ret_trace == self.exp_trace and self.ret_rr == self.exp_rr
+                  and self.ret_rf == self.exp_rf and self.ret_mem == self.exp_mem)
+
+        print(f"\n{self.clock_counter} cycles: {'PASS' if passed else 'FAIL'}\n\n")
 
     def ret_to_trace(self) -> None:
         self.ret_trace = [[0] * 8 for _ in self.instructions]
@@ -172,11 +197,11 @@ class Testbench:
 
 
 if __name__ == "__main__":
-    tb = Testbench()
-    tb.csv_loader("cat_1.csv")
-    tb.module = arch.Arch(tb.instructions, tb.mem, tb.rr, tb.rf)
-    print(f"Loaded {len(tb.instructions)} instructions from cat_1.csv")
-    while tb.inst_prog < len(tb.instructions):
-        tb.running()
-    tb.post_proc()
-    print(f"Completed simulation in {tb.clock_counter} cycles")
+    for filename in ["cat_1.csv", "cat_2.csv"]:
+        tb = Testbench()
+        tb.csv_loader(filename)
+        tb.module = arch.Arch(tb.instructions, tb.mem, tb.rr, tb.rf)
+        while tb.inst_prog < len(tb.instructions):
+            tb.running()
+        tb.post_proc()
+        tb.print_report()
