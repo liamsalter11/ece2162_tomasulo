@@ -74,10 +74,30 @@ class Arch:
         return available, False, (-1, -1)
 
     def issue(self, edge: bool, inst: int) -> bool:
-        """Finish the one-cycle ISSUE stage; inst is an instruction index."""
+        """Register an instruction and its current operands in a free RS."""
         if not edge:
             return self.is_done
-        return inst != -1
+        if inst == -1:
+            return False
+
+        group, slot = self.stat_ex(inst)[0]
+        if group == -1:
+            return False
+
+        self.tm_rs[group][slot] = [True, False, self.inst[inst][0],
+                                  [False, 0], [False, 0], [0, 0], [0, 0]]
+        for i in range(2):
+            operand = self.inst[inst][i + 2]
+            value = operand[1]
+            if operand[0] == 1:
+                value = self.reg_r[operand[1]]
+            if operand[0] == 2:
+                value = self.reg_f[operand[1]]
+            self.tm_rs[group][slot][i + 3] = [True, value]
+
+        self.ex_inst[group][slot] = inst
+        self.tm_count[group][slot] = 0
+        return True
 
     def execute(self, edge: bool) -> list[list[bool]]:                                                                                                                                                                                 
        self.tomasulo(edge)                                                                                                                                                                                                              
@@ -108,7 +128,7 @@ class Arch:
             if self.tm_count[0][i] >= self.tm_cycles[0]:
                 # complete cal
                 self.tm_rs[0][i][1] = False
-                self.tm_ret[0][i] = [True, self.tm_rs[0][i][3][1] + self.tm_rs[0][i][4][1]] if self.tm_rs[0][i][1] == 5 \
+                self.tm_ret[0][i] = [True, self.tm_rs[0][i][3][1] + self.tm_rs[0][i][4][1]] if self.tm_rs[0][i][2] in (5,7) \
                                         else [True, self.tm_rs[0][i][3][1] - self.tm_rs[0][i][4][1]] 
                 self.tm_rs[0][i][3:5] = [[False, 0], [False, 0]]
 
@@ -135,8 +155,8 @@ class Arch:
             if self.tm_count[1][i] >= self.tm_cycles[1]:
                 # complete cal
                 self.tm_rs[1][i][1] = False
-                self.tm_ret[1][i] = [True, self.tm_rs[1][i][3][1] + self.tm_rs[1][i][4][1]] if self.tm_rs[0][i][1] == 6 \
-                                        else [True, self.tm_rs[0][i][3][1] - self.tm_rs[0][i][4][1]] 
+                self.tm_ret[1][i] = [True, self.tm_rs[1][i][3][1] + self.tm_rs[1][i][4][1]] if self.tm_rs[1][i][2] == 6 \
+                                        else [True, self.tm_rs[1][i][3][1] - self.tm_rs[1][i][4][1]] 
                 self.tm_rs[1][i][3:5] = [[False, 0], [False, 0]]
 
         for i in range(2):
@@ -190,7 +210,7 @@ class Arch:
 
     def module(self, rising_edge):
         if rising_edge == True:
-            ex_avail_id, ex_done, ex_done_id = self.stat_ex(self.is_inst)
+            _, ex_done, ex_done_id = self.stat_ex(self.is_inst)
             if (self.commit_done_prev==True):
                 self.commit_inst=-1
             if(self.wb_done_prev==True and self.commit_inst==-1):
@@ -207,11 +227,7 @@ class Arch:
                 self.ex_inst[group][slot] = -1
                 self.mem_done_prev=False
                 self.mem_count = 0
-            if self.is_done_prev and self.is_inst != -1 and ex_avail_id != (-1, -1):
-                group, slot = ex_avail_id
-                self.ex_inst[group][slot] = self.is_inst
-                self.ex_done_prev[group][slot] = False
-                self.tm_count[group][slot] = 0
+            if self.is_done_prev == True:
                 self.is_inst = -1
             if self.is_inst == -1 and self.inst_num < len(self.inst):
                 self.is_inst = self.inst_num
@@ -219,16 +235,16 @@ class Arch:
                 self.is_done_prev=False 
 
         self.commit_done = self.commit(edge=rising_edge, inst=self.commit_inst)
-        self.wb_done = self.write_back(edge=rising_edge)
+        self.wb_done = self.write_back(edge=rising_edge, inst=self.wb_inst)
         self.mem_done = self.memory_access(edge=rising_edge, inst=self.mem_inst)
-        self.ex_done = self.execute(edge=rising_edge, inst=self.ex_inst)
-        self.is_done = self.issue(edge=rising_edge, inst=self.is_inst)
+        self.ex_done = self.execute(edge=rising_edge)
 
         ex_ret = [[-1, -1], [-1, -1, -1], [-1, -1]]
         for i in range(len(self.ex_inst)):
             for j in range(len(self.ex_inst[i])):
                 ex_ret[i][j] = self.ex_inst[i][j] if self.ex_done_prev[i][j] == False else -1
 
+        self.is_done = self.issue(edge=rising_edge, inst=self.is_inst)
         ret = [True, self.is_inst if self.is_done_prev == False else -1,\
                 ex_ret, self.mem_inst if self.mem_done_prev == False else -1,\
                 self.wb_inst if self.wb_done_prev == False else -1,\
