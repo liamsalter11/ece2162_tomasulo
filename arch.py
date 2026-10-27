@@ -50,6 +50,7 @@ class Arch:
         self.rob: list[list[bool | int | float]] = []
         for i in range(len(self.inst)):
             self.rob.append([False, 0])
+        self.rob_head: int = 0
 
         self.commit_inst: int = -1
         self.commit_inst_pending: int = -1
@@ -231,9 +232,16 @@ class Arch:
         return True
 
     def commit(self, edge: bool, inst: int) -> bool:
-        """Finish one COMMIT cycle after module accepts a completed WB result."""
+        """Commit the ready ROB head selected by module."""
         if not edge:
             return self.commit_done
+        if inst != -1:
+            operand = self.inst[inst][1]
+            if operand[0] == 1 and operand[1] != 0:
+                self.reg_r[operand[1]] = self.rob[inst][1]
+            if operand[0] == 2:
+                self.reg_f[operand[1]] = self.rob[inst][1]
+            self.rob_head += 1
         return inst != -1
 
     def module(self, rising_edge):
@@ -243,11 +251,10 @@ class Arch:
                 group, slot = self.wb_rs
                 self.tm_rs[group][slot][0] = False
                 self.wb_rs = (-1, -1)
-            if (self.commit_done_prev==True):
-                self.commit_inst=-1
-            if(self.wb_done_prev==True and self.commit_inst==-1):
-                self.commit_inst = self.wb_inst
                 self.wb_inst = -1
+            self.commit_inst = -1
+            if self.rob_head < len(self.rob) and self.rob[self.rob_head][0] == True:
+                self.commit_inst = self.rob_head
                 self.commit_done_prev=False
             if(self.mem_done_prev==True and self.wb_inst==-1):
                 self.wb_inst = self.mem_inst
