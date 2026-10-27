@@ -47,6 +47,10 @@ class Arch:
         self.wb_done:  bool = True
         self.wb_done_prev: bool = True
 
+        self.rob: list[list[bool | int | float]] = []
+        for i in range(len(self.inst)):
+            self.rob.append([False, 0])
+
         self.commit_inst: int = -1
         self.commit_inst_pending: int = -1
         self.commit_done:  bool = True
@@ -222,6 +226,7 @@ class Arch:
             return False
 
         self.wb_value = self.tm_ret[group][slot][1]
+        self.rob[inst] = [True, self.wb_value]
         self.tm_ret[group][slot][0] = False
         return True
 
