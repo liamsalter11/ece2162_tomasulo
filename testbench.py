@@ -122,13 +122,7 @@ class Testbench:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8-sig", newline="") as csv_file:
             csv.writer(csv_file).writerows(rows)
-    
-    def running(self):
-        if self.clock_counter==0 | self.ret[self.clock_counter][0]==True:
-            self.clock_counter = self.clock_counter + 1
-            self.ret[self.clock_counter] = self.module(rising_edge = True)
-        else:
-            self.ret[self.clock_counter] = self.module(rising_edge = False)
+
 
     def ret_to_trace(self) -> None:
         self.ret_trace = [[0] * 8 for _ in self.instructions]
@@ -165,9 +159,24 @@ class Testbench:
         self.ret_rf = self.module.reg_f
         self.ret_to_trace()
 
+    def running(self) -> None:
+        if self.clock_counter == 0:
+            self.ret = [[]]
+        if self.clock_counter == 0 or self.ret[self.clock_counter][0]:
+            self.clock_counter += 1
+            self.ret.append(self.module.module(rising_edge=True))
+        else:
+            self.ret[self.clock_counter] = self.module.module(rising_edge=False)
+        if self.ret[self.clock_counter][0] and self.module.commit_done:
+            self.inst_prog += 1
+
 
 if __name__ == "__main__":
     tb = Testbench()
     tb.csv_loader("cat_1.csv")
     tb.module = arch.Arch(tb.instructions, tb.mem, tb.rr, tb.rf)
     print(f"Loaded {len(tb.instructions)} instructions from cat_1.csv")
+    while tb.inst_prog < len(tb.instructions):
+        tb.running()
+    tb.post_proc()
+    print(f"Completed simulation in {tb.clock_counter} cycles")
