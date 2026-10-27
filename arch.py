@@ -78,10 +78,13 @@ class Arch:
                         and not self.tm_ret[group][slot][0]):
                         available = (group, slot)
                         break
-        for group, instructions in enumerate(self.ex_inst):
-            for slot, instruction in enumerate(instructions):
-                if instruction != -1 and self.tm_ret[group][slot][0]:
-                    return available, True, (group, slot)
+        done = [(instruction, group, slot)
+                for group, instructions in enumerate(self.ex_inst)
+                for slot, instruction in enumerate(instructions)
+                if instruction != -1 and self.tm_ret[group][slot][0]]
+        if done:
+            _, group, slot = min(done)
+            return available, True, (group, slot)
         return available, False, (-1, -1)
 
     def issue(self, edge: bool, inst: int) -> bool:
