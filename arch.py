@@ -8,6 +8,8 @@ class Arch:
         self.mem = mem.copy()
         self.reg_r = reg_r.copy()
         self.reg_f = reg_f.copy()
+        self.rat_r: list[int] = [-1] * len(self.reg_r)
+        self.rat_f: list[int] = [-1] * len(self.reg_f)
         self.inst_num = 0
 
         self.is_inst: int = -1
@@ -24,13 +26,14 @@ class Arch:
         #  add.d [1][0:2][ocp, busy, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk]]
         #  mux.i [2][0:1][ocp, busy, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk]]
         self.tm_cycles: tuple[int, int, int] = (1, 3, 20)
-        self.tm_rs: list[list[list[bool|int|list[bool|int]]]] = \
+        # Qj/Qk: [operand type, ROB index]; [0, 0] means no dependency.
+        self.tm_rs: list[list[list[bool|int|list[bool|int|float]]]] = \
             [[[False,False,0,[False,0],[False,0],[0,0],[0,0]], [False,False,0,[False,0],[False,0],[0,0],[0,0]]], \
             [[False,False,0,[False,0],[False,0],[0,0],[0,0]], [False,False,0,[False,0],[False,0],[0,0],[0,0]], [False,False,0,[False,0],[False,0],[0,0],[0,0]]], \
             [[False,False,0,[False,0],[False,0],[0,0],[0,0]], [False,False,0,[False,0],[False,0],[0,0],[0,0]]]]
         self.tm_count: list[list[int]] = [[0, 0], [0, 0, 0], [0, 0]]
         #  add.i [0][0:1][valid,value,ROB tag] add.d [1][0:2][valid,value,ROB tag] mux.i [2][0:1][valid,value,ROB tag]
-        self.tm_ret: list[list[list[bool|int]]] = [[[False,0,0], [False,0,0]], [[False,0,0], [False,0,0], [False,0,0]], [[False,0,0], [False,0,0]]]
+        self.tm_ret: list[list[list[bool|int|float]]] = [[[False,0,0], [False,0,0]], [[False,0,0], [False,0,0], [False,0,0]], [[False,0,0], [False,0,0]]]
         
         self.mem_inst: int = -1
         self.mem_inst_pending: int = -1
@@ -97,12 +100,26 @@ class Arch:
         for i in range(2):
             operand = self.inst[inst][i + 2]
             value = operand[1]
+            tag = -1
             if operand[0] == 1:
                 value = self.reg_r[operand[1]]
+                tag = self.rat_r[operand[1]]
             if operand[0] == 2:
                 value = self.reg_f[operand[1]]
-            self.tm_rs[group][slot][i + 3] = [True, value]
+                tag = self.rat_f[operand[1]]
+            if tag != -1 and self.rob[tag][0] == False:
+                self.tm_rs[group][slot][i + 3] = [False, 0]
+                self.tm_rs[group][slot][i + 5] = [operand[0], tag]
+            else:
+                if tag != -1:
+                    value = self.rob[tag][1]
+                self.tm_rs[group][slot][i + 3] = [True, value]
 
+        operand = self.inst[inst][1]
+        if operand[0] == 1 and operand[1] != 0:
+            self.rat_r[operand[1]] = inst
+        if operand[0] == 2:
+            self.rat_f[operand[1]] = inst
         self.ex_inst[group][slot] = inst
         self.tm_count[group][slot] = 0
         return True
@@ -239,8 +256,12 @@ class Arch:
             operand = self.inst[inst][1]
             if operand[0] == 1 and operand[1] != 0:
                 self.reg_r[operand[1]] = self.rob[inst][1]
+                if self.rat_r[operand[1]] == inst:
+                    self.rat_r[operand[1]] = -1
             if operand[0] == 2:
                 self.reg_f[operand[1]] = self.rob[inst][1]
+                if self.rat_f[operand[1]] == inst:
+                    self.rat_f[operand[1]] = -1
             self.rob_head += 1
         return inst != -1
 
@@ -248,6 +269,12 @@ class Arch:
         if rising_edge == True:
             _, ex_done, ex_done_id = self.stat_ex(self.is_inst)
             if self.wb_done_prev == True and self.wb_rs != (-1, -1):
+                for group in range(len(self.tm_rs)):
+                    for slot in range(len(self.tm_rs[group])):
+                        for i in range(2):
+                            if self.tm_rs[group][slot][i + 5] in ([1, self.wb_inst], [2, self.wb_inst]):
+                                self.tm_rs[group][slot][i + 3] = [True, self.wb_value]
+                                self.tm_rs[group][slot][i + 5] = [0, 0]
                 group, slot = self.wb_rs
                 self.tm_rs[group][slot][0] = False
                 self.wb_rs = (-1, -1)
@@ -285,10 +312,10 @@ class Arch:
         ex_ret = [[-1, -1], [-1, -1, -1], [-1, -1]]
         for i in range(len(self.ex_inst)):
             for j in range(len(self.ex_inst[i])):
-                ex_ret[i][j] = self.ex_inst[i][j] if self.ex_done_prev[i][j] == False else -1
+                ex_ret[i][j] = self.ex_inst[i][j] if self.ex_done_prev[i][j] == False and self.tm_count[i][j] > 0 else -1
 
         self.is_done = self.issue(edge=rising_edge, inst=self.is_inst)
-        ret = [True, self.is_inst if self.is_done_prev == False else -1,\
+        ret = [True, self.is_inst if self.is_done == True else -1,\
                 ex_ret, self.mem_inst if self.mem_done_prev == False else -1,\
                 self.wb_inst if self.wb_done_prev == False else -1,\
                 self.commit_inst if self.commit_done_prev == False else -1]
