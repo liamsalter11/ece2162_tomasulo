@@ -1,4 +1,5 @@
 import csv
+import json
 from pathlib import Path
 from typing import Final, assert_never
 import arch
@@ -28,6 +29,7 @@ class Testbench:
         self.module: arch.Arch
         self.clock_counter: int = 0
         self.filename: str = ""
+        self.config: dict[str, int | dict[str, dict[str, int]]] = {}
         self.instructions: list[list[int | tuple[int, int]]] = []
         self.inst_prog: int = 0
         self.mem: list[float] = []
@@ -85,6 +87,44 @@ class Testbench:
         ]
         self.ret_trace = []
         self.filename = path.name
+
+    def asm_loader(self, filename: str | Path) -> None:
+        path = Path(__file__).resolve().parent / "input" / filename
+        self.instructions = []
+        self.inst_text = []
+        with path.open(encoding="utf-8-sig") as asm_file:
+            for line in asm_file:
+                text = line.split("#", 1)[0].strip()
+                if not text:
+                    continue
+                parts = text.replace(",", " ").replace("(", " ").replace(")", " ").split()
+                instruction: list[int | tuple[int, int]] = [OPCODES[parts[0].lower()]]
+                for operand in parts[1:]:
+                    prefix = operand[:1].upper()
+                    if prefix in OPERAND_TYPES:
+                        instruction.append((OPERAND_TYPES[prefix], int(operand[1:])))
+                    else:
+                        instruction.append((0, int(operand)))
+                while len(instruction) < 4:
+                    instruction.append((0, 0))
+                self.instructions.append(instruction)
+                self.inst_text.append(text)
+        self.filename = path.name
+
+    def mem_loader(self, filename: str | Path) -> None:
+        path = Path(__file__).resolve().parent / "input" / filename
+        self.mem = [0.0] * 64
+        index = 0
+        with path.open(encoding="utf-8-sig") as mem_file:
+            for line in mem_file:
+                for value in line.split("#", 1)[0].split():
+                    self.mem[index] = float(value)
+                    index += 1
+
+    def json_loader(self, filename: str | Path) -> None:
+        path = Path(__file__).resolve().parent / "input" / filename
+        with path.open(encoding="utf-8-sig") as json_file:
+            self.config = json.load(json_file)
 
     def csv_writer(self) -> None:
         rows: list[list[str | int | float]] = [
