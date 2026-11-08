@@ -121,10 +121,37 @@ class Testbench:
                     self.mem[index] = float(value)
                     index += 1
 
+    def rr_loader(self, filename: str | Path) -> None:
+        path = Path(__file__).resolve().parent / "input" / filename
+        self.rr = []
+        with path.open(encoding="utf-8-sig") as rr_file:
+            for line in rr_file:
+                for value in line.split("#", 1)[0].split():
+                    self.rr.append(int(value))
+
+    def rf_loader(self, filename: str | Path) -> None:
+        path = Path(__file__).resolve().parent / "input" / filename
+        self.rf = []
+        with path.open(encoding="utf-8-sig") as rf_file:
+            for line in rf_file:
+                for value in line.split("#", 1)[0].split():
+                    self.rf.append(float(value))
+
     def json_loader(self, filename: str | Path) -> None:
         path = Path(__file__).resolve().parent / "input" / filename
         with path.open(encoding="utf-8-sig") as json_file:
             self.config = json.load(json_file)
+
+    def exp_loader(self, filename: str | Path) -> None:
+        path = Path(__file__).resolve().parent / "input" / filename
+        with path.open(encoding="utf-8-sig", newline="") as exp_file:
+            rows = [row for row in csv.reader(exp_file) if any(row)]
+        self.exp_rr = [int(value) for value in rows[0][1:] if value]
+        self.exp_rf = [float(value) for value in rows[1][1:] if value]
+        self.exp_mem = [float(value) for value in rows[2][1:] if value]
+        self.exp_trace = []
+        for row in rows[4:]:
+            self.exp_trace.append([int(value) if value else 0 for value in row[4:12]])
 
     def csv_writer(self) -> None:
         rows: list[list[str | int | float]] = [
