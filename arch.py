@@ -2,7 +2,10 @@
 
 
 class Arch:
-    def __init__(self, inst, mem, reg_r, reg_f):
+    def __init__(self, inst, mem, reg_r, reg_f, config):
+        conf = config["confnctional_units"]
+        units = [conf["integer"], conf["floating_point_add"], conf["floating_point_mul"]]
+        rs_sizes = tuple(unit["num_rs"] for unit in units)
         self.inst = inst
         # Add R3, R1, R2 == [5, (1, 3), (1, 1), (1, 2)] 
         self.mem = mem.copy()
@@ -17,30 +20,35 @@ class Arch:
         self.is_done: bool = True
         self.is_done_prev: bool = True
 
-        self.ex_inst: list[list[int]] = [[-1, -1], [-1, -1, -1], [-1, -1]]
-        self.ex_inst_pending: list[list[int]] = [[-1, -1], [-1, -1, -1], [-1, -1]]
-        self.ex_done: list[list[bool]] = [[True, True], [True, True, True], [True, True]]
-        self.ex_done_prev: list[list[bool]] = [[True, True], [True, True, True], [True, True]]
+        self.ex_inst: list[list[int]] = [[-1] * count for count in rs_sizes]
+        self.ex_inst_pending: list[list[int]] = [group.copy() for group in self.ex_inst]
+        self.ex_done: list[list[bool]] = [[True] * count for count in rs_sizes]
+        self.ex_done_prev: list[list[bool]] = [group.copy() for group in self.ex_done]
 
+        self.tm_cycles: tuple[int, ...] = tuple(unit["ex_cycles"] for unit in units)
+        
         #  add.i [0][0:1][ocp, busy, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk]]
         #  add.d [1][0:2][ocp, busy, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk]]
         #  mux.i [2][0:1][ocp, busy, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk]]
-        self.tm_cycles: tuple[int, int, int] = (1, 3, 20)
         # Qj/Qk: [operand type, ROB index]; [0, 0] means no dependency.
-        self.tm_rs: list[list[list[bool|int|list[bool|int|float]]]] = \
-            [[[False,False,0,[False,0],[False,0],[0,0],[0,0]], [False,False,0,[False,0],[False,0],[0,0],[0,0]]], \
-            [[False,False,0,[False,0],[False,0],[0,0],[0,0]], [False,False,0,[False,0],[False,0],[0,0],[0,0]], [False,False,0,[False,0],[False,0],[0,0],[0,0]]], \
-            [[False,False,0,[False,0],[False,0],[0,0],[0,0]], [False,False,0,[False,0],[False,0],[0,0],[0,0]]]]
-        self.tm_count: list[list[int]] = [[0, 0], [0, 0, 0], [0, 0]]
-        #  add.i [0][0:1][valid,value,ROB tag] add.d [1][0:2][valid,value,ROB tag] mux.i [2][0:1][valid,value,ROB tag]
-        self.tm_ret: list[list[list[bool|int|float]]] = [[[False,0,0], [False,0,0]], [[False,0,0], [False,0,0], [False,0,0]], [[False,0,0], [False,0,0]]]
-        
+        self.tm_rs: list[list[list[bool|int|list[bool|int|float]]]] = [
+            [[False,False,0,[False,0],[False,0],[0,0],[0,0]] for _ in range(rs_sizes[0])],
+            [[False,False,0,[False,0],[False,0],[0,0],[0,0]] for _ in range(rs_sizes[1])],
+            [[False,False,0,[False,0],[False,0],[0,0],[0,0]] for _ in range(rs_sizes[2])],
+        ]
+        self.tm_count: list[list[int]] = [[0] * count for count in rs_sizes]
+        self.tm_ret: list[list[list[bool|int|float]]] = [
+            [[False,0,0] for _ in range(rs_sizes[0])],
+            [[False,0,0] for _ in range(rs_sizes[1])],
+            [[False,0,0] for _ in range(rs_sizes[2])],
+        ]
+
         self.mem_inst: int = -1
         self.mem_inst_pending: int = -1
         self.mem_rs: tuple[int, int] = (-1, -1)
         self.mem_done:  bool = True
         self.mem_done_prev: bool = True
-        self.mem_cycles: int = 4
+        self.mem_cycles: int = conf["load_store"]["mem_cycles"]
         self.mem_count: int = 0
 
         self.wb_inst: int = -1
@@ -60,10 +68,10 @@ class Arch:
         self.commit_done:  bool = True
         self.commit_done_prev: bool = True
 
-        self.ldst_isnt: list[int] = [-1, -1, -1]
-        self.ldst_isnt_pending: tuple[int, int, int] = (-1,-1,-1)
-        self.ldst_done: list[bool] = [True, True, True]
-        self.ldst_done_prev: list[bool] = [True, True, True]
+        self.ldst_isnt: list[int] = [-1] * conf["load_store"]["num_rs"]
+        self.ldst_isnt_pending: tuple[int, ...] = tuple(self.ldst_isnt)
+        self.ldst_done: list[bool] = [True] * len(self.ldst_isnt)
+        self.ldst_done_prev: list[bool] = self.ldst_done.copy()
 
     def stat_ex(self, inst_num: int) -> tuple[tuple[int, int], bool, tuple[int, int]]:
         available = (-1, -1)
@@ -136,7 +144,7 @@ class Arch:
             return 
         
         addi_idx: bool = False
-        for i in range(2):
+        for i in range(len(self.tm_rs[0])):
             if self.tm_ret[0][i][0] == True:
                 # pending. wait for consume result
                 continue
@@ -160,12 +168,12 @@ class Arch:
                 # complete cal
                 self.tm_rs[0][i][1] = False
                 self.tm_ret[0][i] = [True, self.tm_rs[0][i][3][1] + self.tm_rs[0][i][4][1]] if self.tm_rs[0][i][2] in (5,7) \
-                                        else [True, self.tm_rs[0][i][3][1] - self.tm_rs[0][i][4][1]] 
+                                        else [True, self.tm_rs[0][i][3][1] - self.tm_rs[0][i][4][1]]
                 self.tm_rs[0][i][3:5] = [[False, 0], [False, 0]]
 
 
         addd_idx: bool = False
-        for i in range(3):
+        for i in range(len(self.tm_rs[1])):
             if self.tm_ret[1][i][0] == True:
                 # pending. wait for consume result
                 continue
@@ -189,11 +197,11 @@ class Arch:
                 # complete cal
                 self.tm_rs[1][i][1] = False
                 self.tm_ret[1][i] = [True, self.tm_rs[1][i][3][1] + self.tm_rs[1][i][4][1]] if self.tm_rs[1][i][2] == 6 \
-                                        else [True, self.tm_rs[1][i][3][1] - self.tm_rs[1][i][4][1]] 
+                                        else [True, self.tm_rs[1][i][3][1] - self.tm_rs[1][i][4][1]]
                 self.tm_rs[1][i][3:5] = [[False, 0], [False, 0]]
 
         muld_idx:bool = False
-        for i in range(2):
+        for i in range(len(self.tm_rs[2])):
             if self.tm_ret[2][i][0] == True:
                 # pending. wait for consume result
                 continue
@@ -312,7 +320,7 @@ class Arch:
         self.mem_done = self.memory_access(edge=rising_edge, inst=self.mem_inst)
         self.ex_done = self.execute(edge=rising_edge)
 
-        ex_ret = [[-1, -1], [-1, -1, -1], [-1, -1]]
+        ex_ret = [[-1] * len(group) for group in self.ex_inst]
         for i in range(len(self.ex_inst)):
             for j in range(len(self.ex_inst[i])):
                 ex_ret[i][j] = self.ex_inst[i][j] if self.ex_done_prev[i][j] == False and self.tm_count[i][j] > 0 else -1

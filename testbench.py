@@ -267,7 +267,8 @@ if __name__ == "__main__":
     for filename in ["cat_1.csv", "cat_2.csv"]:
         tb = Testbench()
         tb.csv_loader(filename)
-        tb.module = arch.Arch(tb.instructions, tb.mem, tb.rr, tb.rf)
+        tb.json_loader("../default_config.json")
+        tb.module = arch.Arch(tb.instructions, tb.mem, tb.rr, tb.rf, tb.config)
         while tb.inst_prog < len(tb.instructions):
             tb.running()
         tb.post_proc()
