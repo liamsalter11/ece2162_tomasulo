@@ -3,7 +3,7 @@
 
 class Arch:
     def __init__(self, inst, mem, reg_r, reg_f, config):
-        conf = config["confnctional_units"]
+        conf = config["functional_units"]
         units = [conf["integer"], conf["floating_point_add"], conf["floating_point_mul"]]
         rs_sizes = tuple(unit["num_rs"] for unit in units)
         self.inst = inst

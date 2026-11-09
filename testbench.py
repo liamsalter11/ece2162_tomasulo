@@ -264,10 +264,14 @@ class Testbench:
 
 
 if __name__ == "__main__":
-    for filename in ["cat_1.csv", "cat_2.csv"]:
+    for filename in ["cat_1.asm", "cat_2.asm"]:
         tb = Testbench()
-        tb.csv_loader(filename)
+        tb.asm_loader(filename)
+        tb.mem_loader("../default_mem.mem")
+        tb.rr_loader("../default_rr.mem")
+        tb.rf_loader("../default_rf.mem")
         tb.json_loader("../default_config.json")
+        tb.exp_loader(f"exp_{Path(filename).stem}.csv")
         tb.module = arch.Arch(tb.instructions, tb.mem, tb.rr, tb.rf, tb.config)
         while tb.inst_prog < len(tb.instructions):
             tb.running()
