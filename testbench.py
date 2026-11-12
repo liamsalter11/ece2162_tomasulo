@@ -1,8 +1,10 @@
 import csv
 import json
 from pathlib import Path
-from typing import assert_never
+from typing import Final, assert_never
 import arch
+
+MAX_CYCLES: Final[int] = 1000
 
 type StageState = int | list[StageState] | tuple[StageState, ...]
 
@@ -156,9 +158,9 @@ class Testbench:
             arch.OPERAND_TYPES["R"]: "R",
             arch.OPERAND_TYPES["F"]: "F",
         }
-        for instruction, trace in zip(self.instructions, self.ret_trace, strict=True):
+        for pc, trace in zip(self.module.dyn, self.ret_trace, strict=True):
             row: list[str | int | float] = []
-            for value in instruction:
+            for value in self.instructions[pc]:
                 match value:
                     case 0:
                         row.extend(["NOP", "", "", ""])
@@ -182,9 +184,11 @@ class Testbench:
         print(f"===== {self.filename} =====")
 
         print(f"{'':24}{'ISSUE':>8}{'EX':>8}{'MEM':>8}{'WB':>8}{'COMMIT':>8}")
-        for text, t in zip(self.inst_text, self.ret_trace):
+        for inst, t in enumerate(self.ret_trace):
+            text = self.inst_text[self.module.dyn[inst]]
             cells = [t[0], span(t[1], t[2]), span(t[3], t[4]), t[5], span(t[6], t[7])]
-            print(f"{text:24}" + "".join(f"{cell:>8}" for cell in cells))
+            squashed = "  squashed" if self.module.squashed[inst] else ""
+            print(f"{text:24}" + "".join(f"{cell:>8}" for cell in cells) + squashed)
 
         print("\nREGISTER VALUES")
         for i in range(0, 32, 8):
@@ -197,10 +201,11 @@ class Testbench:
         passed = (self.ret_trace == self.exp_trace and self.ret_rr == self.exp_rr
                   and self.ret_rf == self.exp_rf and self.ret_mem == self.exp_mem)
 
-        print(f"\n{self.clock_counter} cycles: {'PASS' if passed else 'FAIL'}\n\n")
+        status = "TIMEOUT" if not self.module.finished() else "PASS" if passed else "FAIL"
+        print(f"\n{self.clock_counter} cycles: {status}\n\n")
 
     def ret_to_trace(self) -> None:
-        self.ret_trace = [[0] * 8 for _ in self.instructions]
+        self.ret_trace = [[0] * 8 for _ in self.module.dyn]
         previous: list[set[int]] = [set() for _ in range(5)]
         finished: list[set[int]] = [set() for _ in range(5)]
         for clock, record in enumerate(self.ret[1:], start=1):
@@ -247,7 +252,7 @@ class Testbench:
 
 
 if __name__ == "__main__":
-    for filename in ["cat_1.asm", "cat_2.asm"]:
+    for filename in ["cat_1.asm", "cat_2.asm", "cat_5.asm"]:
         tb = Testbench()
         tb.asm_loader(filename)
         tb.mem_loader("../default_mem.mem")
@@ -256,7 +261,7 @@ if __name__ == "__main__":
         tb.json_loader("../default_config.json")
         tb.exp_loader(f"exp_{Path(filename).stem}.csv")
         tb.module = arch.Arch(tb.instructions, tb.mem, tb.rr, tb.rf, tb.config)
-        while tb.inst_prog < len(tb.instructions):
+        while not tb.module.finished() and tb.clock_counter < MAX_CYCLES:
             tb.running()
         tb.post_proc()
         tb.print_report()

@@ -34,8 +34,10 @@ class Arch:
         self.pc: int = 0
         self.dyn: list[int] = []
         self.pred: list[int] = []
-        self.bht: list[int] = [0] * 8
-        self.btb: list[list[bool | int]] = [[False, 0] for _ in range(8)]
+        self.squashed: list[bool] = []
+        self.bht: list[int] = [0] * 8  # Branch history table
+        self.btb: list[int] = [0] * 8  # Branch target buffer
+        self.mispredict: tuple[int, int] = (-1, -1)
 
         self.is_inst: int = -1
         self.is_inst_pending: int = -1
@@ -196,6 +198,8 @@ class Arch:
                 self.tm_rs[0][i][1] = False
                 self.tm_ret[0][i] = [True, self.tm_rs[0][i][3][1] + self.tm_rs[0][i][4][1]] if self.tm_rs[0][i][2] in (OPCODES["add"], OPCODES["addi"]) \
                                         else [True, self.tm_rs[0][i][3][1] - self.tm_rs[0][i][4][1]]
+                if self.tm_rs[0][i][2] in (OPCODES["beq"], OPCODES["bne"]):
+                    self.resolve_branch(self.ex_inst[0][i], self.tm_ret[0][i][1])
                 self.tm_rs[0][i][3:5] = [[False, 0], [False, 0]]
 
 
@@ -254,6 +258,71 @@ class Arch:
                 self.tm_ret[2][i] = [True, self.tm_rs[2][i][3][1] * self.tm_rs[2][i][4][1]]
                 self.tm_rs[2][i][3:5] = [[False, 0], [False, 0]]
 
+    def resolve_branch(self, tag: int, result: int | float) -> None:
+        """Update the predictor with the branch outcome and flag a misprediction."""
+        pc = self.dyn[tag]
+        instruction = self.inst[pc]
+        taken = result == 0 if instruction[0] == OPCODES["beq"] else result != 0
+        target = pc + 1 + instruction[3][1]
+        actual = target if taken else pc + 1
+
+        idx = pc % 8
+        self.bht[idx] = 1 if taken else 0
+        self.btb[idx] = target
+
+        if actual != self.pred[tag] and (self.mispredict[0] == -1 or tag < self.mispredict[0]):
+            self.mispredict = (tag, actual)
+
+    def finished(self) -> bool:
+        """True once every fetched instruction has committed or been squashed."""
+        return (self.pc >= len(self.inst) and self.mispredict == (-1, -1)
+                and all(self.squashed[self.rob_head:]))
+
+    def free_rs(self, group: int, slot: int) -> None:
+        self.tm_rs[group][slot] = [False, False, 0, [False, 0], [False, 0], [0, 0], [0, 0]]
+        self.tm_ret[group][slot] = [False, 0, 0]
+        self.tm_count[group][slot] = 0
+        self.ex_inst[group][slot] = -1
+
+    def recover(self) -> bool:
+        """Squash instructions younger than a mispredicted branch and redirect fetch."""
+        tag, correct_pc = self.mispredict
+        if tag == -1:
+            return False
+
+        for t in range(tag + 1, len(self.dyn)):
+            self.squashed[t] = True
+        for group in range(len(self.ex_inst)):
+            for slot in range(len(self.ex_inst[group])):
+                if self.ex_inst[group][slot] > tag:
+                    self.free_rs(group, slot)
+        if self.mem_inst > tag:
+            self.free_rs(*self.mem_rs)
+            self.mem_inst = -1
+            self.mem_rs = (-1, -1)
+            self.mem_count = 0
+        if self.wb_inst > tag:
+            self.free_rs(*self.wb_rs)
+            self.wb_inst = -1
+            self.wb_rs = (-1, -1)
+        self.is_inst = -1
+
+        self.rat_r = [-1] * len(self.reg_r)
+        self.rat_f = [-1] * len(self.reg_f)
+        for t in range(self.rob_head, tag + 1):
+            instruction = self.inst[self.dyn[t]]
+            if self.squashed[t] or instruction[0] in (OPCODES["beq"], OPCODES["bne"]):
+                continue
+            operand = instruction[1]
+            if operand[0] == OPERAND_TYPES["R"] and operand[1] != 0:
+                self.rat_r[operand[1]] = t
+            if operand[0] == OPERAND_TYPES["F"]:
+                self.rat_f[operand[1]] = t
+
+        self.pc = correct_pc
+        self.mispredict = (-1, -1)
+        return True
+
     def memory_access(self, edge: bool, inst: int) -> bool:
         """Time LD/SD memory access; other operations pass through in one cycle."""
         if not edge:
@@ -306,6 +375,7 @@ class Arch:
 
     def module(self, rising_edge):
         if rising_edge == True:
+            recovering = self.recover()
             _, ex_done, ex_done_id = self.stat_ex(self.is_inst)
             if self.wb_done_prev == True and self.wb_rs != (-1, -1):
                 for group in range(len(self.tm_rs)):
@@ -319,6 +389,8 @@ class Arch:
                 self.wb_rs = (-1, -1)
                 self.wb_inst = -1
             self.commit_inst = -1
+            while self.rob_head < len(self.rob) and self.squashed[self.rob_head]:
+                self.rob_head += 1
             if self.rob_head < len(self.rob) and self.rob[self.rob_head][0] == True:
                 self.commit_inst = self.rob_head
                 self.commit_done_prev=False
@@ -338,17 +410,18 @@ class Arch:
                 self.mem_count = 0
             if self.is_done_prev == True:
                 self.is_inst = -1
-            if self.is_inst == -1 and self.pc < len(self.inst):
+            if self.is_inst == -1 and self.pc < len(self.inst) and not recovering:
                 self.is_inst = len(self.dyn)
                 self.dyn.append(self.pc)
+                self.squashed.append(False)
                 self.rob.append([False, 0])
                 next_pc = self.pc + 1
 
                 # Check for branch instruction
                 if self.inst[self.pc][0] in (OPCODES["beq"], OPCODES["bne"]):
                     idx = self.pc % 8
-                    if self.bht[idx] == 1 and self.btb[idx][0]:
-                        next_pc = self.btb[idx][1]
+                    if self.bht[idx] == 1:
+                        next_pc = self.btb[idx]
                 self.pred.append(next_pc)
                 self.pc = next_pc
                 self.is_done_prev=False
