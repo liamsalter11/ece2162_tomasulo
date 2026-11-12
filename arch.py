@@ -13,7 +13,8 @@ class Arch:
         self.reg_f = reg_f.copy()
         self.rat_r: list[int] = [-1] * len(self.reg_r)
         self.rat_f: list[int] = [-1] * len(self.reg_f)
-        self.inst_num = 0
+        self.pc: int = 0
+        self.dyn: list[int] = []
 
         self.is_inst: int = -1
         self.is_inst_pending: int = -1
@@ -59,8 +60,6 @@ class Arch:
         self.wb_done_prev: bool = True
 
         self.rob: list[list[bool | int | float]] = []
-        for i in range(len(self.inst)):
-            self.rob.append([False, 0])
         self.rob_head: int = 0
 
         self.commit_inst: int = -1
@@ -77,7 +76,7 @@ class Arch:
         available = (-1, -1)
         if inst_num >= 0:
             group = {0: 0, 3: 0, 4: 0, 5: 0, 6: 1, 7: 0,
-                     8: 0, 9: 1, 10: 2}.get(self.inst[inst_num][0], -1)
+                     8: 0, 9: 1, 10: 2}.get(self.inst[self.dyn[inst_num]][0], -1)
             if group != -1:
                 for slot, instruction in enumerate(self.ex_inst[group]):
                     if (instruction == -1
@@ -106,10 +105,15 @@ class Arch:
         if group == -1:
             return False
 
-        self.tm_rs[group][slot] = [True, False, self.inst[inst][0],
+        instruction = self.inst[self.dyn[inst]]
+        if instruction[0] in (3, 4):
+            sources, dest = instruction[1:3], (0, 0)
+        else:
+            sources, dest = instruction[2:4], instruction[1]
+        self.tm_rs[group][slot] = [True, False, instruction[0],
                                   [False, 0], [False, 0], [0, 0], [0, 0]]
         for i in range(2):
-            operand = self.inst[inst][i + 2]
+            operand = sources[i]
             value = operand[1]
             tag = -1
             if operand[0] == 1:
@@ -126,7 +130,7 @@ class Arch:
                     value = self.rob[tag][1]
                 self.tm_rs[group][slot][i + 3] = [True, value]
 
-        operand = self.inst[inst][1]
+        operand = dest
         if operand[0] == 1 and operand[1] != 0:
             self.rat_r[operand[1]] = inst
         if operand[0] == 2:
@@ -234,7 +238,7 @@ class Arch:
         if inst == -1:
             self.mem_count = 0
             return False
-        cycles = self.mem_cycles if self.inst[inst][0] in (1, 2) else 1
+        cycles = self.mem_cycles if self.inst[self.dyn[inst]][0] in (1, 2) else 1
         if self.mem_count < cycles:
             self.mem_count += 1
         return self.mem_count >= cycles
@@ -264,7 +268,8 @@ class Arch:
         if not edge:
             return self.commit_done
         if inst != -1:
-            operand = self.inst[inst][1]
+            instruction = self.inst[self.dyn[inst]]
+            operand = (0, 0) if instruction[0] in (3, 4) else instruction[1]
             if operand[0] == 1 and operand[1] != 0:
                 self.reg_r[operand[1]] = self.rob[inst][1]
                 if self.rat_r[operand[1]] == inst:
@@ -310,10 +315,12 @@ class Arch:
                 self.mem_count = 0
             if self.is_done_prev == True:
                 self.is_inst = -1
-            if self.is_inst == -1 and self.inst_num < len(self.inst):
-                self.is_inst = self.inst_num
-                self.inst_num += 1
-                self.is_done_prev=False 
+            if self.is_inst == -1 and self.pc < len(self.inst):
+                self.is_inst = len(self.dyn)
+                self.dyn.append(self.pc)
+                self.rob.append([False, 0])
+                self.pc += 1
+                self.is_done_prev=False
 
         self.commit_done = self.commit(edge=rising_edge, inst=self.commit_inst)
         self.wb_done = self.write_back(edge=rising_edge, inst=self.wb_inst)
