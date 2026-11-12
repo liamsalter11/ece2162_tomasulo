@@ -1,25 +1,8 @@
 import csv
 import json
 from pathlib import Path
-from typing import Final, assert_never
+from typing import assert_never
 import arch
-
-# ISA table order in P1-description.pdf, pages 2-3.
-OPCODES: Final[dict[str, int]] = {
-    "nop": 0,
-    "ld": 1,
-    "sd": 2,
-    "beq": 3,
-    "bne": 4,
-    "add": 5,
-    "add.d": 6,
-    "addi": 7,
-    "sub": 8,
-    "sub.d": 9,
-    "mult.d": 10,
-}
-
-OPERAND_TYPES: Final[dict[str, int]] = {"none": 0, "R": 1, "F": 2}
 
 type StageState = int | list[StageState] | tuple[StageState, ...]
 
@@ -67,11 +50,11 @@ class Testbench:
         instruction_rows = rows[7:]
         self.instructions = [
             [
-                OPCODES[row[0].lower()],
+                arch.OPCODES[row[0].lower()],
                 *(
-                    (OPERAND_TYPES[operand[:1].upper()], int(operand[1:]))
-                    if operand[:1].upper() in OPERAND_TYPES
-                    else (OPERAND_TYPES["none"], int(operand) if operand else 0)
+                    (arch.OPERAND_TYPES[operand[:1].upper()], int(operand[1:]))
+                    if operand[:1].upper() in arch.OPERAND_TYPES
+                    else (arch.OPERAND_TYPES["none"], int(operand) if operand else 0)
                     for operand in row[1:4]
                 ),
             ]
@@ -98,11 +81,11 @@ class Testbench:
                 if not text:
                     continue
                 parts = text.replace(",", " ").replace("(", " ").replace(")", " ").split()
-                instruction: list[int | tuple[int, int]] = [OPCODES[parts[0].lower()]]
+                instruction: list[int | tuple[int, int]] = [arch.OPCODES[parts[0].lower()]]
                 for operand in parts[1:]:
                     prefix = operand[:1].upper()
-                    if prefix in OPERAND_TYPES:
-                        instruction.append((OPERAND_TYPES[prefix], int(operand[1:])))
+                    if prefix in arch.OPERAND_TYPES:
+                        instruction.append((arch.OPERAND_TYPES[prefix], int(operand[1:])))
                     else:
                         instruction.append((0, int(operand)))
                 while len(instruction) < 4:
@@ -167,11 +150,11 @@ class Testbench:
                 "WB", "COMMIT_start", "COMMIT_end",
             ],
         ]
-        opcode_names = {value: name.capitalize() for name, value in OPCODES.items()}
+        opcode_names = {value: name.capitalize() for name, value in arch.OPCODES.items()}
         operand_prefixes = {
-            OPERAND_TYPES["none"]: "",
-            OPERAND_TYPES["R"]: "R",
-            OPERAND_TYPES["F"]: "F",
+            arch.OPERAND_TYPES["none"]: "",
+            arch.OPERAND_TYPES["R"]: "R",
+            arch.OPERAND_TYPES["F"]: "F",
         }
         for instruction, trace in zip(self.instructions, self.ret_trace, strict=True):
             row: list[str | int | float] = []
