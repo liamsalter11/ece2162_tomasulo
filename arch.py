@@ -1,5 +1,23 @@
 """Clocked stages for the Tomasulo architecture under construction."""
 
+from typing import Final
+
+# ISA table order in P1-description.pdf, pages 2-3.
+OPCODES: Final[dict[str, int]] = {
+    "nop": 0,
+    "ld": 1,
+    "sd": 2,
+    "beq": 3,
+    "bne": 4,
+    "add": 5,
+    "add.d": 6,
+    "addi": 7,
+    "sub": 8,
+    "sub.d": 9,
+    "mult.d": 10,
+}
+
+OPERAND_TYPES: Final[dict[str, int]] = {"none": 0, "R": 1, "F": 2}
 
 class Arch:
     def __init__(self, inst, mem, reg_r, reg_f, config):
@@ -13,7 +31,13 @@ class Arch:
         self.reg_f = reg_f.copy()
         self.rat_r: list[int] = [-1] * len(self.reg_r)
         self.rat_f: list[int] = [-1] * len(self.reg_f)
-        self.inst_num = 0
+        self.pc: int = 0
+        self.dyn: list[int] = []
+        self.pred: list[int] = []
+        self.squashed: list[bool] = []
+        self.bht: list[int] = [0] * 8  # Branch history table
+        self.btb: list[int] = [0] * 8  # Branch target buffer
+        self.mispredict: tuple[int, int] = (-1, -1)
 
         self.is_inst: int = -1
         self.is_inst_pending: int = -1
@@ -59,8 +83,6 @@ class Arch:
         self.wb_done_prev: bool = True
 
         self.rob: list[list[bool | int | float]] = []
-        for i in range(len(self.inst)):
-            self.rob.append([False, 0])
         self.rob_head: int = 0
 
         self.commit_inst: int = -1
@@ -76,8 +98,10 @@ class Arch:
     def stat_ex(self, inst_num: int) -> tuple[tuple[int, int], bool, tuple[int, int]]:
         available = (-1, -1)
         if inst_num >= 0:
-            group = {0: 0, 3: 0, 4: 0, 5: 0, 6: 1, 7: 0,
-                     8: 0, 9: 1, 10: 2}.get(self.inst[inst_num][0], -1)
+            group = {OPCODES["nop"]: 0, OPCODES["beq"]: 0, OPCODES["bne"]: 0,
+                     OPCODES["add"]: 0, OPCODES["add.d"]: 1, OPCODES["addi"]: 0,
+                     OPCODES["sub"]: 0, OPCODES["sub.d"]: 1,
+                     OPCODES["mult.d"]: 2}.get(self.inst[self.dyn[inst_num]][0], -1)
             if group != -1:
                 for slot, instruction in enumerate(self.ex_inst[group]):
                     if (instruction == -1
@@ -106,16 +130,21 @@ class Arch:
         if group == -1:
             return False
 
-        self.tm_rs[group][slot] = [True, False, self.inst[inst][0],
+        instruction = self.inst[self.dyn[inst]]
+        if instruction[0] in (OPCODES["beq"], OPCODES["bne"]):
+            sources, dest = instruction[1:3], (OPERAND_TYPES["none"], 0)
+        else:
+            sources, dest = instruction[2:4], instruction[1]
+        self.tm_rs[group][slot] = [True, False, instruction[0],
                                   [False, 0], [False, 0], [0, 0], [0, 0]]
         for i in range(2):
-            operand = self.inst[inst][i + 2]
+            operand = sources[i]
             value = operand[1]
             tag = -1
-            if operand[0] == 1:
+            if operand[0] == OPERAND_TYPES["R"]:
                 value = self.reg_r[operand[1]]
                 tag = self.rat_r[operand[1]]
-            if operand[0] == 2:
+            if operand[0] == OPERAND_TYPES["F"]:
                 value = self.reg_f[operand[1]]
                 tag = self.rat_f[operand[1]]
             if tag != -1 and self.rob[tag][0] == False:
@@ -126,10 +155,10 @@ class Arch:
                     value = self.rob[tag][1]
                 self.tm_rs[group][slot][i + 3] = [True, value]
 
-        operand = self.inst[inst][1]
-        if operand[0] == 1 and operand[1] != 0:
+        operand = dest
+        if operand[0] == OPERAND_TYPES["R"] and operand[1] != 0:
             self.rat_r[operand[1]] = inst
-        if operand[0] == 2:
+        if operand[0] == OPERAND_TYPES["F"]:
             self.rat_f[operand[1]] = inst
         self.ex_inst[group][slot] = inst
         self.tm_count[group][slot] = 0
@@ -167,8 +196,10 @@ class Arch:
             if self.tm_count[0][i] >= self.tm_cycles[0]:
                 # complete cal
                 self.tm_rs[0][i][1] = False
-                self.tm_ret[0][i] = [True, self.tm_rs[0][i][3][1] + self.tm_rs[0][i][4][1]] if self.tm_rs[0][i][2] in (5,7) \
+                self.tm_ret[0][i] = [True, self.tm_rs[0][i][3][1] + self.tm_rs[0][i][4][1]] if self.tm_rs[0][i][2] in (OPCODES["add"], OPCODES["addi"]) \
                                         else [True, self.tm_rs[0][i][3][1] - self.tm_rs[0][i][4][1]]
+                if self.tm_rs[0][i][2] in (OPCODES["beq"], OPCODES["bne"]):
+                    self.resolve_branch(self.ex_inst[0][i], self.tm_ret[0][i][1])
                 self.tm_rs[0][i][3:5] = [[False, 0], [False, 0]]
 
 
@@ -196,7 +227,7 @@ class Arch:
             if self.tm_count[1][i] >= self.tm_cycles[1]:
                 # complete cal
                 self.tm_rs[1][i][1] = False
-                self.tm_ret[1][i] = [True, self.tm_rs[1][i][3][1] + self.tm_rs[1][i][4][1]] if self.tm_rs[1][i][2] == 6 \
+                self.tm_ret[1][i] = [True, self.tm_rs[1][i][3][1] + self.tm_rs[1][i][4][1]] if self.tm_rs[1][i][2] == OPCODES["add.d"] \
                                         else [True, self.tm_rs[1][i][3][1] - self.tm_rs[1][i][4][1]]
                 self.tm_rs[1][i][3:5] = [[False, 0], [False, 0]]
 
@@ -227,6 +258,71 @@ class Arch:
                 self.tm_ret[2][i] = [True, self.tm_rs[2][i][3][1] * self.tm_rs[2][i][4][1]]
                 self.tm_rs[2][i][3:5] = [[False, 0], [False, 0]]
 
+    def resolve_branch(self, tag: int, result: int | float) -> None:
+        """Update the predictor with the branch outcome and flag a misprediction."""
+        pc = self.dyn[tag]
+        instruction = self.inst[pc]
+        taken = result == 0 if instruction[0] == OPCODES["beq"] else result != 0
+        target = pc + 1 + instruction[3][1]
+        actual = target if taken else pc + 1
+
+        idx = pc % 8
+        self.bht[idx] = 1 if taken else 0
+        self.btb[idx] = target
+
+        if actual != self.pred[tag] and (self.mispredict[0] == -1 or tag < self.mispredict[0]):
+            self.mispredict = (tag, actual)
+
+    def finished(self) -> bool:
+        """True once every fetched instruction has committed or been squashed."""
+        return (self.pc >= len(self.inst) and self.mispredict == (-1, -1)
+                and all(self.squashed[self.rob_head:]))
+
+    def free_rs(self, group: int, slot: int) -> None:
+        self.tm_rs[group][slot] = [False, False, 0, [False, 0], [False, 0], [0, 0], [0, 0]]
+        self.tm_ret[group][slot] = [False, 0, 0]
+        self.tm_count[group][slot] = 0
+        self.ex_inst[group][slot] = -1
+
+    def recover(self) -> bool:
+        """Squash instructions younger than a mispredicted branch and redirect fetch."""
+        tag, correct_pc = self.mispredict
+        if tag == -1:
+            return False
+
+        for t in range(tag + 1, len(self.dyn)):
+            self.squashed[t] = True
+        for group in range(len(self.ex_inst)):
+            for slot in range(len(self.ex_inst[group])):
+                if self.ex_inst[group][slot] > tag:
+                    self.free_rs(group, slot)
+        if self.mem_inst > tag:
+            self.free_rs(*self.mem_rs)
+            self.mem_inst = -1
+            self.mem_rs = (-1, -1)
+            self.mem_count = 0
+        if self.wb_inst > tag:
+            self.free_rs(*self.wb_rs)
+            self.wb_inst = -1
+            self.wb_rs = (-1, -1)
+        self.is_inst = -1
+
+        self.rat_r = [-1] * len(self.reg_r)
+        self.rat_f = [-1] * len(self.reg_f)
+        for t in range(self.rob_head, tag + 1):
+            instruction = self.inst[self.dyn[t]]
+            if self.squashed[t] or instruction[0] in (OPCODES["beq"], OPCODES["bne"]):
+                continue
+            operand = instruction[1]
+            if operand[0] == OPERAND_TYPES["R"] and operand[1] != 0:
+                self.rat_r[operand[1]] = t
+            if operand[0] == OPERAND_TYPES["F"]:
+                self.rat_f[operand[1]] = t
+
+        self.pc = correct_pc
+        self.mispredict = (-1, -1)
+        return True
+
     def memory_access(self, edge: bool, inst: int) -> bool:
         """Time LD/SD memory access; other operations pass through in one cycle."""
         if not edge:
@@ -234,7 +330,7 @@ class Arch:
         if inst == -1:
             self.mem_count = 0
             return False
-        cycles = self.mem_cycles if self.inst[inst][0] in (1, 2) else 1
+        cycles = self.mem_cycles if self.inst[self.dyn[inst]][0] in (OPCODES["ld"], OPCODES["sd"]) else 1
         if self.mem_count < cycles:
             self.mem_count += 1
         return self.mem_count >= cycles
@@ -264,12 +360,13 @@ class Arch:
         if not edge:
             return self.commit_done
         if inst != -1:
-            operand = self.inst[inst][1]
-            if operand[0] == 1 and operand[1] != 0:
+            instruction = self.inst[self.dyn[inst]]
+            operand = (OPERAND_TYPES["none"], 0) if instruction[0] in (OPCODES["beq"], OPCODES["bne"]) else instruction[1]
+            if operand[0] == OPERAND_TYPES["R"] and operand[1] != 0:
                 self.reg_r[operand[1]] = self.rob[inst][1]
                 if self.rat_r[operand[1]] == inst:
                     self.rat_r[operand[1]] = -1
-            if operand[0] == 2:
+            if operand[0] == OPERAND_TYPES["F"]:
                 self.reg_f[operand[1]] = self.rob[inst][1]
                 if self.rat_f[operand[1]] == inst:
                     self.rat_f[operand[1]] = -1
@@ -278,12 +375,13 @@ class Arch:
 
     def module(self, rising_edge):
         if rising_edge == True:
+            recovering = self.recover()
             _, ex_done, ex_done_id = self.stat_ex(self.is_inst)
             if self.wb_done_prev == True and self.wb_rs != (-1, -1):
                 for group in range(len(self.tm_rs)):
                     for slot in range(len(self.tm_rs[group])):
                         for i in range(2):
-                            if self.tm_rs[group][slot][i + 5] in ([1, self.wb_inst], [2, self.wb_inst]):
+                            if self.tm_rs[group][slot][i + 5] in ([OPERAND_TYPES["R"], self.wb_inst], [OPERAND_TYPES["F"], self.wb_inst]):
                                 self.tm_rs[group][slot][i + 3] = [True, self.wb_value]
                                 self.tm_rs[group][slot][i + 5] = [0, 0]
                 group, slot = self.wb_rs
@@ -291,6 +389,8 @@ class Arch:
                 self.wb_rs = (-1, -1)
                 self.wb_inst = -1
             self.commit_inst = -1
+            while self.rob_head < len(self.rob) and self.squashed[self.rob_head]:
+                self.rob_head += 1
             if self.rob_head < len(self.rob) and self.rob[self.rob_head][0] == True:
                 self.commit_inst = self.rob_head
                 self.commit_done_prev=False
@@ -310,10 +410,21 @@ class Arch:
                 self.mem_count = 0
             if self.is_done_prev == True:
                 self.is_inst = -1
-            if self.is_inst == -1 and self.inst_num < len(self.inst):
-                self.is_inst = self.inst_num
-                self.inst_num += 1
-                self.is_done_prev=False 
+            if self.is_inst == -1 and self.pc < len(self.inst) and not recovering:
+                self.is_inst = len(self.dyn)
+                self.dyn.append(self.pc)
+                self.squashed.append(False)
+                self.rob.append([False, 0])
+                next_pc = self.pc + 1
+
+                # Check for branch instruction
+                if self.inst[self.pc][0] in (OPCODES["beq"], OPCODES["bne"]):
+                    idx = self.pc % 8
+                    if self.bht[idx] == 1:
+                        next_pc = self.btb[idx]
+                self.pred.append(next_pc)
+                self.pc = next_pc
+                self.is_done_prev=False
 
         self.commit_done = self.commit(edge=rising_edge, inst=self.commit_inst)
         self.wb_done = self.write_back(edge=rising_edge, inst=self.wb_inst)

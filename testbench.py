@@ -4,22 +4,7 @@ from pathlib import Path
 from typing import Final, assert_never
 import arch
 
-# ISA table order in P1-description.pdf, pages 2-3.
-OPCODES: Final[dict[str, int]] = {
-    "nop": 0,
-    "ld": 1,
-    "sd": 2,
-    "beq": 3,
-    "bne": 4,
-    "add": 5,
-    "add.d": 6,
-    "addi": 7,
-    "sub": 8,
-    "sub.d": 9,
-    "mult.d": 10,
-}
-
-OPERAND_TYPES: Final[dict[str, int]] = {"none": 0, "R": 1, "F": 2}
+MAX_CYCLES: Final[int] = 1000
 
 type StageState = int | list[StageState] | tuple[StageState, ...]
 
@@ -67,11 +52,11 @@ class Testbench:
         instruction_rows = rows[7:]
         self.instructions = [
             [
-                OPCODES[row[0].lower()],
+                arch.OPCODES[row[0].lower()],
                 *(
-                    (OPERAND_TYPES[operand[:1].upper()], int(operand[1:]))
-                    if operand[:1].upper() in OPERAND_TYPES
-                    else (OPERAND_TYPES["none"], int(operand) if operand else 0)
+                    (arch.OPERAND_TYPES[operand[:1].upper()], int(operand[1:]))
+                    if operand[:1].upper() in arch.OPERAND_TYPES
+                    else (arch.OPERAND_TYPES["none"], int(operand) if operand else 0)
                     for operand in row[1:4]
                 ),
             ]
@@ -98,11 +83,11 @@ class Testbench:
                 if not text:
                     continue
                 parts = text.replace(",", " ").replace("(", " ").replace(")", " ").split()
-                instruction: list[int | tuple[int, int]] = [OPCODES[parts[0].lower()]]
+                instruction: list[int | tuple[int, int]] = [arch.OPCODES[parts[0].lower()]]
                 for operand in parts[1:]:
                     prefix = operand[:1].upper()
-                    if prefix in OPERAND_TYPES:
-                        instruction.append((OPERAND_TYPES[prefix], int(operand[1:])))
+                    if prefix in arch.OPERAND_TYPES:
+                        instruction.append((arch.OPERAND_TYPES[prefix], int(operand[1:])))
                     else:
                         instruction.append((0, int(operand)))
                 while len(instruction) < 4:
@@ -167,15 +152,15 @@ class Testbench:
                 "WB", "COMMIT_start", "COMMIT_end",
             ],
         ]
-        opcode_names = {value: name.capitalize() for name, value in OPCODES.items()}
+        opcode_names = {value: name.capitalize() for name, value in arch.OPCODES.items()}
         operand_prefixes = {
-            OPERAND_TYPES["none"]: "",
-            OPERAND_TYPES["R"]: "R",
-            OPERAND_TYPES["F"]: "F",
+            arch.OPERAND_TYPES["none"]: "",
+            arch.OPERAND_TYPES["R"]: "R",
+            arch.OPERAND_TYPES["F"]: "F",
         }
-        for instruction, trace in zip(self.instructions, self.ret_trace, strict=True):
+        for pc, trace in zip(self.module.dyn, self.ret_trace, strict=True):
             row: list[str | int | float] = []
-            for value in instruction:
+            for value in self.instructions[pc]:
                 match value:
                     case 0:
                         row.extend(["NOP", "", "", ""])
@@ -199,9 +184,11 @@ class Testbench:
         print(f"===== {self.filename} =====")
 
         print(f"{'':24}{'ISSUE':>8}{'EX':>8}{'MEM':>8}{'WB':>8}{'COMMIT':>8}")
-        for text, t in zip(self.inst_text, self.ret_trace):
+        for inst, t in enumerate(self.ret_trace):
+            text = self.inst_text[self.module.dyn[inst]]
             cells = [t[0], span(t[1], t[2]), span(t[3], t[4]), t[5], span(t[6], t[7])]
-            print(f"{text:24}" + "".join(f"{cell:>8}" for cell in cells))
+            squashed = "  squashed" if self.module.squashed[inst] else ""
+            print(f"{text:24}" + "".join(f"{cell:>8}" for cell in cells) + squashed)
 
         print("\nREGISTER VALUES")
         for i in range(0, 32, 8):
@@ -214,10 +201,11 @@ class Testbench:
         passed = (self.ret_trace == self.exp_trace and self.ret_rr == self.exp_rr
                   and self.ret_rf == self.exp_rf and self.ret_mem == self.exp_mem)
 
-        print(f"\n{self.clock_counter} cycles: {'PASS' if passed else 'FAIL'}\n\n")
+        status = "TIMEOUT" if not self.module.finished() else "PASS" if passed else "FAIL"
+        print(f"\n{self.clock_counter} cycles: {status}\n\n")
 
     def ret_to_trace(self) -> None:
-        self.ret_trace = [[0] * 8 for _ in self.instructions]
+        self.ret_trace = [[0] * 8 for _ in self.module.dyn]
         previous: list[set[int]] = [set() for _ in range(5)]
         finished: list[set[int]] = [set() for _ in range(5)]
         for clock, record in enumerate(self.ret[1:], start=1):
@@ -264,7 +252,7 @@ class Testbench:
 
 
 if __name__ == "__main__":
-    for filename in ["cat_1.asm", "cat_2.asm"]:
+    for filename in ["cat_1.asm", "cat_2.asm", "cat_5.asm"]:
         tb = Testbench()
         tb.asm_loader(filename)
         tb.mem_loader("../default_mem.mem")
@@ -273,7 +261,7 @@ if __name__ == "__main__":
         tb.json_loader("../default_config.json")
         tb.exp_loader(f"exp_{Path(filename).stem}.csv")
         tb.module = arch.Arch(tb.instructions, tb.mem, tb.rr, tb.rf, tb.config)
-        while tb.inst_prog < len(tb.instructions):
+        while not tb.module.finished() and tb.clock_counter < MAX_CYCLES:
             tb.running()
         tb.post_proc()
         tb.print_report()
