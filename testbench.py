@@ -235,8 +235,8 @@ class Testbench:
 
     def post_proc(self) -> None:
         self.ret_mem = self.module.mem
-        self.ret_rr = self.module.reg_r
-        self.ret_rf = self.module.reg_f
+        self.ret_rr = self.module.arf_r
+        self.ret_rf = self.module.arf_f
         self.ret_to_trace()
 
     def running(self) -> None:
