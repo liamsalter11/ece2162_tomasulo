@@ -69,11 +69,14 @@ class Arch:
 
         self.mem_inst: int = -1
         self.mem_inst_pending: int = -1
-        self.mem_rs: tuple[int, int] = (-1, -1)
-        self.mem_done:  bool = True
-        self.mem_done_prev: bool = True
+        self.mem_ctrl_inst: list[list[int]] = [[-1] * count for count in conf["load_store"]["num_rs"]]
+        # [ocp, age, strt, done, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk], offset]
+        self.mem_rs: list[list[list[bool|int|list[bool|int|float]]]] = \
+            [[False,False,False,False,-1,[False,0],[False,0],[0,0],[0,0], 0] for _ in range(conf["load_store"]["num_rs"])]
         self.mem_cycles: int = conf["load_store"]["mem_cycles"]
+        self.mem_idx: int = 0
         self.mem_count: int = 0
+
 
         self.wb_inst: int = -1
         self.wb_inst_pending: int = -1
@@ -164,9 +167,9 @@ class Arch:
         self.tm_count[group][slot] = 0
         return True
 
-    def execute(self, edge: bool) -> list[list[bool]]:                                                                                                                                                                                 
-       self.tomasulo(edge)                                                                                                                                                                                                              
-       return [[bool(result[0]) for result in group] for group in self.tm_ret]       
+    def execute(self, edge: bool) -> list[list[bool]]:
+        self.tomasulo(edge)
+        return [[bool(result[0]) for result in group] for group in self.tm_ret]       
 
     def tomasulo(self, edge: bool):
         if not edge:
@@ -196,8 +199,7 @@ class Arch:
             if self.tm_count[0][i] >= self.tm_cycles[0]:
                 # complete cal
                 self.tm_rs[0][i][1] = False
-                self.tm_ret[0][i] = [True, self.tm_rs[0][i][3][1] + self.tm_rs[0][i][4][1]] if self.tm_rs[0][i][2] in (OPCODES["add"], OPCODES["addi"]) \
-                                        else [True, self.tm_rs[0][i][3][1] - self.tm_rs[0][i][4][1]]
+                self.tm_ret[0][i] = [True, self.tm_rs[0][i][3][1] + self.tm_rs[0][i][4][1]] if self.tm_rs[0][i][2] in (OPCODES["add"], OPCODES["addi"]) else [True, self.tm_rs[0][i][3][1] - self.tm_rs[0][i][4][1]]
                 if self.tm_rs[0][i][2] in (OPCODES["beq"], OPCODES["bne"]):
                     self.resolve_branch(self.ex_inst[0][i], self.tm_ret[0][i][1])
                 self.tm_rs[0][i][3:5] = [[False, 0], [False, 0]]
@@ -273,6 +275,47 @@ class Arch:
         if actual != self.pred[tag] and (self.mispredict[0] == -1 or tag < self.mispredict[0]):
             self.mispredict = (tag, actual)
 
+    def avail_mem_rs(self) -> int:
+        avail_idx = -1
+        for i in range(self.mem_rs):
+            self.mem_rs[i][1] = self.mem_rs[i][1] if self.mem_rs[i][0]==True else 0 
+            avail_idx = i if (self.mem_rs[self.mem_idx + i % self.conf["load_store"]["num_rs"]] == False) and avail_idx == -1 else -1
+        return avail_idx
+
+
+    def mem_ctrl(self):
+        # [ocp, age, strt, done, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk], offset]
+        # inc mem rs insts age
+        for i in range(len(self.mem_rs)):
+            self.mem_rs[i][1] = self.mem_rs[i][1] + 1 if self.mem_rs[i][0]==True else 0 
+
+        # inc compute cycle
+        if self.mem_idx != -1:
+            self.mem_count = self.mem_count + 1
+
+        # the end of compute or starting condition
+        if self.mem_count >= self.mem_cycles or self.mem_idx == -1:
+            self.mem_count = 0
+            # finzlize inst
+            if self.mem_idx != -1:
+                self.mem_rs[self.mem_idx][3] = True
+                if self.mem_rs[self.mem_idx][4] == OPCODES["ld"]:
+                    # TODO: access PRF
+                    self.reg_f[self.mem_rs[self.mem_idx][5][1]] = self.mem[self.mem_rs[self.mem_idx][6][1] + self.mem_rs[self.mem_idx][9]]
+                if self.mem_rs[self.mem_idx][4] == OPCODES["sd"]:
+                    # TODO: access PRF
+                    self.mem[self.mem_rs[self.mem_idx][6][1] + self.mem_rs[self.mem_idx][9]] = self.mem_rs[self.mem_idx][5][1]
+                    
+            # update next mem rs index
+            oldest_age = -1
+            self.mem_idx = -1
+            for i in range(len(self.mem_rs)):
+                # check availivity oldest & strt & !done & valid_j & valid_k 
+                if self.mem_rs[i][1]>oldest_age and self.mem_rs[i][0]==True and self.mem_rs[i][2]==True and self.mem_rs[i][3]==False and self.mem_rs[i][5][0]==True and self.mem_rs[i][6][0]==True:
+                    self.mem_idx = i
+                    oldest_age = self.mem_rs[i][1] if self.mem_rs[i][1]>oldest_age else oldest_age
+        return
+    
     def finished(self) -> bool:
         """True once every fetched instruction has committed or been squashed."""
         return (self.pc >= len(self.inst) and self.mispredict == (-1, -1)
