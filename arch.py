@@ -122,14 +122,14 @@ class Arch:
                         and not self.tm_ret[group][slot][0]):
                         available = (group, slot)
                         break
-        done = []
+        done = (-1, -1)
         for group in range(len(self.ex_inst)):
             for slot in range(len(self.ex_inst[group])):
                 if self.ex_inst[group][slot] != -1 and self.tm_ret[group][slot][0]:
-                    done.append((self.ex_inst[group][slot], group, slot))
-        if done:
-            _, group, slot = min(done)
-            return available, True, (group, slot)
+                    if done==(-1,-1) or self.tm_rs[group][slot][1]>self.tm_rs[done[0]][done[1]][1]:
+                        done = (group, slot)
+        if done != (-1, -1):
+            return available, True, done
         return available, False, (-1, -1)
 
     def issue(self, edge: bool, inst: int) -> bool:
@@ -347,54 +347,46 @@ class Arch:
         return avail_idx
 
 
-    def mem_ctrl(self) -> tuple[int, int]:
+    def mem_ctrl(self, mem_rdy: bool, age: bool|int|list[bool|int|float]) -> tuple[int, int]:
         # [ocp, age, strt, done, op, [valid,addr], [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk], offset]
-        ex_inst, mem_inst = -1, -1
-        forwarding = -1
+        ex_inst, ldst_mem, fwd = -1, -1, -1
 
-        # inc mem rs insts age
-        for i in range(len(self.mem_rs)):
-            self.mem_rs[i][1] = self.mem_rs[i][1] + 1 if self.mem_rs[i][0]==True else 0 
-
-        # inc compute cycle
+        # inc mem cycle
         if self.mem_idx != -1:
             self.mem_count = self.mem_count + 1
 
-        # the end of compute or starting condition
-        if self.mem_idx == -1 and self.mem_inst == -1:
-            # update next mem rs index
-            oldest_age = -1
+        # sel mem idx
+        if self.mem_idx == -1:
             for i in range(len(self.mem_rs)):
-                # check oldest & addr_valid & !done & valid_j
-                if self.mem_rs[i][1]>oldest_age and self.mem_rs[i][0]==True and self.mem_rs[i][5]!=[False,0] and (self.mem_rs[i][2]==True or self.mem_rs[i][4]==OPCODES["sd"]) and self.mem_rs[i][3]==False and self.mem_rs[i][6]!=[False,0]:
-                    ready = True
-                    store = -1
+                if (self.mem_idx==-1 or self.mem_rs[i][1]>self.mem_rs[self.mem_idx][1]) and self.mem_rs[i][0]==True and self.mem_rs[i][5]!=[False,0] and (self.mem_rs[i][2]==True or self.mem_rs[i][4]==OPCODES["sd"]) and self.mem_rs[i][3]==False and self.mem_rs[i][6]!=[False,0]:
+                    rdy = True
+                    st_idx = -1
                     if self.mem_rs[i][4] == OPCODES["ld"]:
-                        # check older stores
+                        # check older st
                         for j in range(len(self.mem_rs)):
                             if self.mem_rs[j][0]==True and self.mem_rs[j][4]==OPCODES["sd"] and self.ldst_isnt[j]<self.ldst_isnt[i]:
                                 if self.mem_rs[j][5] == [False,0]:
-                                    ready = False
+                                    rdy = False
                                 if self.mem_rs[j][5]!=[False,0] and self.mem_rs[j][5]==self.mem_rs[i][5]:
-                                    if store == -1 or self.ldst_isnt[j]>self.ldst_isnt[store]:
-                                        store = j
-                        if store != -1 and self.mem_rs[store][6] == [False,0]:
-                            ready = False
-                    if ready == True:
+                                    if st_idx == -1 or self.ldst_isnt[j]>self.ldst_isnt[st_idx]:
+                                        st_idx = j
+                        if st_idx != -1 and self.mem_rs[st_idx][6] == [False,0]:
+                            rdy = False
+                    if rdy == True:
+                        if (self.mem_rs[i][4]!=OPCODES["sd"] or self.mem_rs[i][2]==False) and (mem_rdy==False or age>self.mem_rs[i][1]):
+                            continue
                         self.mem_idx = i
-                        forwarding = store
-                        oldest_age = self.mem_rs[i][1]
+                        fwd = st_idx
             if self.mem_idx != -1:
                 self.mem_count = 1
 
-        # finzlize inst
+        # fin mem op
         if self.mem_idx != -1:
             if self.mem_rs[self.mem_idx][4]!=OPCODES["sd"] or self.mem_rs[self.mem_idx][2]==False:
-                mem_inst = self.ldst_isnt[self.mem_idx]
-            if (self.mem_rs[self.mem_idx][4]==OPCODES["sd"] and self.mem_rs[self.mem_idx][2]==False) or forwarding!=-1 or self.mem_count>=self.mem_cycles:
+                ldst_mem = self.ldst_isnt[self.mem_idx]
+            if (self.mem_rs[self.mem_idx][4]==OPCODES["sd"] and self.mem_rs[self.mem_idx][2]==False) or fwd!=-1 or self.mem_count>=self.mem_cycles:
                 if self.mem_rs[self.mem_idx][4] == OPCODES["ld"]:
-                    value = self.mem_rs[forwarding][6][1] if forwarding != -1 else self.mem[int(self.mem_rs[self.mem_idx][5][1]) // 4]
-                    self.mem_rs[self.mem_idx][6] = [True, value]
+                    self.mem_rs[self.mem_idx][6] = [True, self.mem_rs[fwd][6][1] if fwd!=-1 else self.mem[int(self.mem_rs[self.mem_idx][5][1]) // 4]]
                 if self.mem_rs[self.mem_idx][4]==OPCODES["sd"] and self.mem_rs[self.mem_idx][2]==True:
                     # st done
                     self.mem[int(self.mem_rs[self.mem_idx][5][1]) // 4] = self.mem_rs[self.mem_idx][6][1]
@@ -404,6 +396,10 @@ class Arch:
                     self.free_rs(-1, self.mem_idx)
                 self.mem_idx = -1
                 self.mem_count = 0
+
+        # inc mem rs insts age
+        for i in range(len(self.mem_rs)):
+            self.mem_rs[i][1] = self.mem_rs[i][1] + 1 if self.mem_rs[i][0]==True else 0 
 
         # update address rs index
         if self.mem_ex_idx == -1:
@@ -426,7 +422,7 @@ class Arch:
                     self.mem_rs[self.mem_ex_idx][2] = True
                 self.mem_ex_idx = -1
                 self.mem_ex_count = 0
-        return ex_inst, mem_inst
+        return ex_inst, ldst_mem
     
     def finished(self) -> bool:
         # inst & st done
@@ -492,11 +488,21 @@ class Arch:
         self.mispredict = (-1, -1)
         return True
 
-    def memory_access(self, edge: bool, inst: int) -> bool:
-        """Pass arithmetic results through MEM in one cycle."""
+    def memory_access(self, edge: bool) -> tuple[bool, int, int]:
+        # mem stage
         if not edge:
-            return self.mem_done
-        return inst != -1
+            return self.mem_done, -1, -1
+        _, ex_done, ex_done_id = self.stat_ex(-1)
+        ldst_ex, ldst_mem = self.mem_ctrl(self.mem_inst==-1, self.tm_rs[ex_done_id[0]][ex_done_id[1]][1] if ex_done else -1)
+
+        # sel ex to mem
+        if ex_done==True and self.mem_inst==-1 and ldst_mem==-1 and (self.mem_idx==-1 or (self.mem_rs[self.mem_idx][4]==OPCODES["sd"] and self.mem_rs[self.mem_idx][2]==True)):
+            group, slot = ex_done_id
+            self.mem_inst = self.ex_inst[group][slot]
+            self.mem_stage_rs = ex_done_id
+            self.ex_inst[group][slot] = -1
+            self.mem_done_prev=False
+        return self.mem_inst != -1, ldst_mem, ldst_ex
 
     def write_back(self, edge: bool, inst: int) -> bool:
         """Receive the selected result once and hold its value for COMMIT."""
@@ -558,7 +564,6 @@ class Arch:
         ldst_ex, ldst_mem = -1, -1
         if rising_edge == True:
             recovering = self.recover()
-            _, ex_done, ex_done_id = self.stat_ex(self.is_inst)
             if self.wb_done_prev == True and self.wb_rs != (-1, -1):
                 operand = self.inst[self.dyn[self.wb_inst]][1]
                 for group in range(len(self.tm_rs)):
@@ -614,12 +619,6 @@ class Arch:
                         self.mem_stage_rs = (-1, -1)
                     self.wb_done=False
                     self.wb_done_prev=False
-            if(ex_done==True and self.mem_inst==-1 and self.mem_idx==-1):
-                group, slot = ex_done_id
-                self.mem_inst = self.ex_inst[group][slot]
-                self.mem_stage_rs = ex_done_id
-                self.ex_inst[group][slot] = -1
-                self.mem_done_prev=False
             if self.is_done_prev == True:
                 self.is_inst = -1
             if self.is_inst == -1 and self.pc < len(self.inst) and not recovering:
@@ -645,10 +644,8 @@ class Arch:
             if self.mem_rs[i][0]==True and self.mem_rs[i][4]==OPCODES["sd"] and self.mem_rs[i][2]==True and self.ldst_isnt[i]!=self.commit_inst:
                 commit_ret.append(self.ldst_isnt[i])
         self.wb_done = self.write_back(edge=rising_edge, inst=self.wb_inst)
-        self.mem_done = self.memory_access(edge=rising_edge, inst=self.mem_inst)
+        self.mem_done, ldst_mem, ldst_ex = self.memory_access(edge=rising_edge)
         self.ex_done = self.execute(edge=rising_edge)
-        if rising_edge == True:
-            ldst_ex, ldst_mem = self.mem_ctrl()
 
         ex_ret = [[-1] * len(group) for group in self.ex_inst]
         for i in range(len(self.ex_inst)):
