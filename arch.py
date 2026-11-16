@@ -53,14 +53,14 @@ class Arch:
 
         self.tm_cycles: tuple[int, ...] = tuple(unit["ex_cycles"] for unit in units)
         
-        #  add.i [0][0:1][ocp, busy, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk]]
-        #  add.d [1][0:2][ocp, busy, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk]]
-        #  mux.i [2][0:1][ocp, busy, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk]]
+        #  add.i [0][0:1][ocp, age, busy, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk]]
+        #  add.d [1][0:2][ocp, age, busy, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk]]
+        #  mux.i [2][0:1][ocp, age, busy, op, [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk]]
         # pos: ARF=0, PRF=1
         self.tm_rs: list[list[list[bool|int|list[bool|int|float]]]] = [
-            [[False,False,0,[False,0],[False,0],[0,0],[0,0]] for _ in range(rs_sizes[0])],
-            [[False,False,0,[False,0],[False,0],[0,0],[0,0]] for _ in range(rs_sizes[1])],
-            [[False,False,0,[False,0],[False,0],[0,0],[0,0]] for _ in range(rs_sizes[2])],
+            [[False,0,False,0,[False,0],[False,0],[0,0],[0,0]] for _ in range(rs_sizes[0])],
+            [[False,0,False,0,[False,0],[False,0],[0,0],[0,0]] for _ in range(rs_sizes[1])],
+            [[False,0,False,0,[False,0],[False,0],[0,0],[0,0]] for _ in range(rs_sizes[2])],
         ]
         self.tm_count: list[list[int]] = [[0] * count for count in rs_sizes]
         self.tm_ret: list[list[list[bool|int|float]]] = [
@@ -118,7 +118,7 @@ class Arch:
                 for slot in range(len(self.ex_inst[group])):
                     if (self.ex_inst[group][slot] == -1
                         and not self.tm_rs[group][slot][0]
-                        and not self.tm_rs[group][slot][1]
+                        and not self.tm_rs[group][slot][2]
                         and not self.tm_ret[group][slot][0]):
                         available = (group, slot)
                         break
@@ -173,10 +173,10 @@ class Arch:
             self.mem_rs[slot] = [True, 0, False, False, self.inst[self.dyn[inst]][0],
                                  [False, 0], [False, 0], [False, 0], [0, 0], [0, 0], self.inst[self.dyn[inst]][2][1]]
         else:
-            self.tm_rs[group][slot] = [True, False, self.inst[self.dyn[inst]][0],
+            self.tm_rs[group][slot] = [True, 0, False, self.inst[self.dyn[inst]][0],
                                       [False, 0], [False, 0], [0, 0], [0, 0]]
         rs = self.mem_rs[slot] if group == -1 else self.tm_rs[group][slot]
-        source_idx = 6 if group == -1 else 3
+        source_idx = 6 if group == -1 else 4
         for i in range(2):
             operand = sources[i]
             value = operand[1]
@@ -222,18 +222,27 @@ class Arch:
         if not edge:
             return 
         
-        addi_idx: bool = False
+        # inc rs age
+        for i in range(len(self.tm_rs)):
+            for j in range(len(self.tm_rs[i])):
+                self.tm_rs[i][j][1] = self.tm_rs[i][j][1] + 1 if self.tm_rs[i][j][0]==True else 0
+
+        # sel addi idx
+        addi_idx: int = -1
+        for i in range(len(self.tm_rs[0])):
+            if self.tm_rs[0][i][0]==True and self.tm_rs[0][i][2]==False and self.tm_ret[0][i][0]==False and self.tm_rs[0][i][4][0]==True and self.tm_rs[0][i][5][0]==True:
+                if addi_idx==-1 or self.tm_rs[0][i][1]>self.tm_rs[0][addi_idx][1]:
+                    addi_idx = i
         for i in range(len(self.tm_rs[0])):
             if self.tm_ret[0][i][0] == True:
                 # pending. wait for consume result
                 continue
-            if self.tm_rs[0][i][1] == False:
-                if (addi_idx == False and self.tm_rs[0][i][3][0] == True and self.tm_rs[0][i][4][0] == True):
+            if self.tm_rs[0][i][2] == False:
+                if i == addi_idx:
                     # start cal
-                    self.tm_rs[0][i][1] = True
+                    self.tm_rs[0][i][2] = True
                     self.tm_ret[0][i] = [False, 0]
                     self.tm_count[0][i] = 1
-                    addi_idx = True
                 else:
                     # wait for inst
                     self.tm_count[0][i] = 0
@@ -245,25 +254,29 @@ class Arch:
                     self.tm_ret[0][i] = [False, 0]
             if self.tm_count[0][i] >= self.tm_cycles[0]:
                 # complete cal
-                self.tm_rs[0][i][1] = False
-                self.tm_ret[0][i] = [True, self.tm_rs[0][i][3][1] + self.tm_rs[0][i][4][1]] if self.tm_rs[0][i][2] in (OPCODES["add"], OPCODES["addi"]) else [True, self.tm_rs[0][i][3][1] - self.tm_rs[0][i][4][1]]
-                if self.tm_rs[0][i][2] in (OPCODES["beq"], OPCODES["bne"]):
+                self.tm_rs[0][i][2] = False
+                self.tm_ret[0][i] = [True, self.tm_rs[0][i][4][1] + self.tm_rs[0][i][5][1]] if self.tm_rs[0][i][3] in (OPCODES["add"], OPCODES["addi"]) else [True, self.tm_rs[0][i][4][1] - self.tm_rs[0][i][5][1]]
+                if self.tm_rs[0][i][3] in (OPCODES["beq"], OPCODES["bne"]):
                     self.resolve_branch(self.ex_inst[0][i], self.tm_ret[0][i][1])
-                self.tm_rs[0][i][3:5] = [[False, 0], [False, 0]]
+                self.tm_rs[0][i][4:6] = [[False, 0], [False, 0]]
 
 
-        addd_idx: bool = False
+        # sel addd idx
+        addd_idx: int = -1
+        for i in range(len(self.tm_rs[1])):
+            if self.tm_rs[1][i][0]==True and self.tm_rs[1][i][2]==False and self.tm_ret[1][i][0]==False and self.tm_rs[1][i][4][0]==True and self.tm_rs[1][i][5][0]==True:
+                if addd_idx==-1 or self.tm_rs[1][i][1]>self.tm_rs[1][addd_idx][1]:
+                    addd_idx = i
         for i in range(len(self.tm_rs[1])):
             if self.tm_ret[1][i][0] == True:
                 # pending. wait for consume result
                 continue
-            if self.tm_rs[1][i][1] == False:
-                if (addd_idx==False and self.tm_rs[1][i][3][0] == True and self.tm_rs[1][i][4][0] == True):
+            if self.tm_rs[1][i][2] == False:
+                if i == addd_idx:
                     # start cal
-                    self.tm_rs[1][i][1] = True
+                    self.tm_rs[1][i][2] = True
                     self.tm_ret[1][i] = [False, 0]
                     self.tm_count[1][i] = 1
-                    addd_idx = True
                 else:
                     # wait for inst
                     self.tm_count[1][i] = 0
@@ -275,23 +288,27 @@ class Arch:
                     self.tm_ret[1][i] = [False, 0]
             if self.tm_count[1][i] >= self.tm_cycles[1]:
                 # complete cal
-                self.tm_rs[1][i][1] = False
-                self.tm_ret[1][i] = [True, self.tm_rs[1][i][3][1] + self.tm_rs[1][i][4][1]] if self.tm_rs[1][i][2] == OPCODES["add.d"] \
-                                        else [True, self.tm_rs[1][i][3][1] - self.tm_rs[1][i][4][1]]
-                self.tm_rs[1][i][3:5] = [[False, 0], [False, 0]]
+                self.tm_rs[1][i][2] = False
+                self.tm_ret[1][i] = [True, self.tm_rs[1][i][4][1] + self.tm_rs[1][i][5][1]] if self.tm_rs[1][i][3] == OPCODES["add.d"] \
+                                        else [True, self.tm_rs[1][i][4][1] - self.tm_rs[1][i][5][1]]
+                self.tm_rs[1][i][4:6] = [[False, 0], [False, 0]]
 
-        muld_idx:bool = False
+        # sel muld idx
+        muld_idx:int = -1
+        for i in range(len(self.tm_rs[2])):
+            if self.tm_rs[2][i][0]==True and self.tm_rs[2][i][2]==False and self.tm_ret[2][i][0]==False and self.tm_rs[2][i][4][0]==True and self.tm_rs[2][i][5][0]==True:
+                if muld_idx==-1 or self.tm_rs[2][i][1]>self.tm_rs[2][muld_idx][1]:
+                    muld_idx = i
         for i in range(len(self.tm_rs[2])):
             if self.tm_ret[2][i][0] == True:
                 # pending. wait for consume result
                 continue
-            if self.tm_rs[2][i][1] == False:
-                if (muld_idx==False and self.tm_rs[2][i][3][0] == True and self.tm_rs[2][i][4][0] == True):
+            if self.tm_rs[2][i][2] == False:
+                if i == muld_idx:
                     # start cal
-                    self.tm_rs[2][i][1] = True
+                    self.tm_rs[2][i][2] = True
                     self.tm_ret[2][i] = [False, 0]
                     self.tm_count[2][i] = 1
-                    muld_idx = True
                 else:
                     # wait for inst
                     self.tm_count[2][i] = 0
@@ -303,9 +320,9 @@ class Arch:
                     self.tm_ret[2][i] = [False, 0]
             if self.tm_count[2][i] >= self.tm_cycles[2]:
                 # complete cal
-                self.tm_rs[2][i][1] = False
-                self.tm_ret[2][i] = [True, self.tm_rs[2][i][3][1] * self.tm_rs[2][i][4][1]]
-                self.tm_rs[2][i][3:5] = [[False, 0], [False, 0]]
+                self.tm_rs[2][i][2] = False
+                self.tm_ret[2][i] = [True, self.tm_rs[2][i][4][1] * self.tm_rs[2][i][5][1]]
+                self.tm_rs[2][i][4:6] = [[False, 0], [False, 0]]
 
     def resolve_branch(self, tag: int, result: int | float) -> None:
         """Update the predictor with the branch outcome and flag a misprediction."""
@@ -422,7 +439,7 @@ class Arch:
             self.mem_rs[slot] = [False,0,False,False,-1,[False,0],[False,0],[False,0],[0,0],[0,0],0]
             self.ldst_isnt[slot] = -1
             return
-        self.tm_rs[group][slot] = [False, False, 0, [False, 0], [False, 0], [0, 0], [0, 0]]
+        self.tm_rs[group][slot] = [False, 0, False, 0, [False, 0], [False, 0], [0, 0], [0, 0]]
         self.tm_ret[group][slot] = [False, 0, 0]
         self.tm_count[group][slot] = 0
         self.ex_inst[group][slot] = -1
@@ -552,10 +569,10 @@ class Arch:
                         for i in range(2):
                             if (self.inst[self.dyn[self.wb_inst]][0] != OPCODES["sd"]
                                 and self.rob[self.wb_inst][1] != -1
-                                and self.tm_rs[group][slot][i + 3] == [False, 0]
-                                and self.tm_rs[group][slot][i + 5] == [1, self.rob[self.wb_inst][1]]
+                                and self.tm_rs[group][slot][i + 4] == [False, 0]
+                                and self.tm_rs[group][slot][i + 6] == [1, self.rob[self.wb_inst][1]]
                                 and sources[i][0] == operand[0]):
-                                self.tm_rs[group][slot][i + 3] = [True, self.wb_value]
+                                self.tm_rs[group][slot][i + 4] = [True, self.wb_value]
                 # update mem rs sources
                 for slot in range(len(self.mem_rs)):
                     if self.mem_rs[slot][0] == False:
