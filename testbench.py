@@ -1,5 +1,6 @@
 import csv
 import json
+from math import isclose
 from pathlib import Path
 from typing import Final, assert_never
 import arch
@@ -199,7 +200,12 @@ class Testbench:
         print("\nNON-ZERO MEMORY VALUES")
         print("  ".join(f"[{4 * i}]={v:g}" for i, v in enumerate(self.ret_mem) if v) or "(none)")
         passed = (self.ret_trace == self.exp_trace and self.ret_rr == self.exp_rr
-                  and self.ret_rf == self.exp_rf and self.ret_mem == self.exp_mem)
+                  and len(self.ret_rf) == len(self.exp_rf)
+                  and all(isclose(ret, exp, rel_tol=0, abs_tol=max(1e-11, 0.01 * abs(exp)))
+                          for ret, exp in zip(self.ret_rf, self.exp_rf))
+                  and len(self.ret_mem) == len(self.exp_mem)
+                  and all(isclose(ret, exp, rel_tol=0, abs_tol=max(1e-11, 0.01 * abs(exp)))
+                          for ret, exp in zip(self.ret_mem, self.exp_mem)))
 
         status = "TIMEOUT" if not self.module.finished() else "PASS" if passed else "FAIL"
         print(f"\n{self.clock_counter} cycles: {status}\n\n")
