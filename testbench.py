@@ -1,5 +1,7 @@
+import argparse
 import csv
 import json
+import sys
 from math import isclose
 from pathlib import Path
 from typing import Final, assert_never
@@ -258,22 +260,51 @@ class Testbench:
             self.inst_prog += 1
 
 
-if __name__ == "__main__":
-    all_passed = True
-    for filename in ["cat_1.asm", "cat_2.asm", "cat_3.asm", "cat_4.asm", "cat_5.asm", "cat_6.asm", "cat_extended.asm"]:
-        tb = Testbench()
-        tb.asm_loader(filename)
-        tb.mem_loader("../default_mem.mem")
-        tb.rr_loader("../default_rr.mem")
-        tb.rf_loader("../default_rf.mem")
-        tb.json_loader("../default_config.json")
-        tb.exp_loader(f"exp_{Path(filename).stem}.csv")
-        tb.module = arch.Arch(tb.instructions, tb.mem, tb.rr, tb.rf, tb.config)
-        while not tb.module.finished() and tb.clock_counter < MAX_CYCLES:
-            tb.running()
-        tb.post_proc()
-        passed = tb.print_report()
-        tb.csv_writer()
-        all_passed = all_passed and passed
+def run_test(asm: str | Path, mem: str | Path, rr: str | Path, rf: str | Path,
+             config: str | Path, exp: str | Path | None = None) -> bool:
+    tb = Testbench()
+    tb.asm_loader(asm)
+    tb.mem_loader(mem)
+    tb.rr_loader(rr)
+    tb.rf_loader(rf)
+    tb.json_loader(config)
+    if exp is not None:
+        tb.exp_loader(exp)
+    tb.module = arch.Arch(tb.instructions, tb.mem, tb.rr, tb.rf, tb.config)
+    while not tb.module.finished() and tb.clock_counter < MAX_CYCLES:
+        tb.running()
+    tb.post_proc()
+    passed = tb.print_report()
+    tb.csv_writer()
+    return passed
 
-    print(f"All tests passed: {all_passed}")
+
+def main(argv: list[str] | None = None) -> None:
+    root = Path(__file__).resolve().parent
+    parser = argparse.ArgumentParser(
+        description="Run the Tomasulo simulator. With no arguments, runs the default test suite.")
+    parser.add_argument("--asm", type=Path, help="assembly program")
+    parser.add_argument("--mem", type=Path, default=root / "default_mem.mem", help="initial memory")
+    parser.add_argument("--rr", type=Path, default=root / "default_rr.mem", help="initial integer registers")
+    parser.add_argument("--rf", type=Path, default=root / "default_rf.mem", help="initial FP registers")
+    parser.add_argument("--config", type=Path, default=root / "default_config.json", help="hardware config")
+    parser.add_argument("--exp", type=Path, help="expected results CSV (optional)")
+    args = parser.parse_args(argv)
+
+    if args.asm is None:
+        if argv if argv is not None else sys.argv[1:]:
+            parser.error("--asm is required when other files are given")
+        all_passed = True
+        for filename in ["cat_1.asm", "cat_2.asm", "cat_3.asm", "cat_4.asm", "cat_5.asm", "cat_6.asm", "cat_extended.asm"]:
+            passed = run_test(filename, "../default_mem.mem", "../default_rr.mem", "../default_rf.mem",
+                              "../default_config.json", f"exp_{Path(filename).stem}.csv")
+            all_passed = all_passed and passed
+        print(f"All tests passed: {all_passed}")
+        return
+
+    run_test(args.asm.resolve(), args.mem.resolve(), args.rr.resolve(), args.rf.resolve(),
+             args.config.resolve(), args.exp.resolve() if args.exp else None)
+
+
+if __name__ == "__main__":
+    main()
