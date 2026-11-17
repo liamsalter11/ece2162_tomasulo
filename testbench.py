@@ -181,13 +181,13 @@ class Testbench:
             csv.writer(csv_file).writerows(rows)
 
     def print_report(self):
-        span = lambda start, end: str(start) if start == end else f"{start}-{end}"
+        span = lambda start, end: "" if start == 0 else str(start) if start == end else f"{start}-{end}"
         print(f"===== {self.filename} =====")
 
         print(f"{'':24}{'ISSUE':>8}{'EX':>8}{'MEM':>8}{'WB':>8}{'COMMIT':>8}")
         for inst, t in enumerate(self.ret_trace):
             text = self.inst_text[self.module.dyn[inst]]
-            cells = [t[0], span(t[1], t[2]), span(t[3], t[4]), t[5], span(t[6], t[7])]
+            cells = [span(t[0], t[0]), span(t[1], t[2]), span(t[3], t[4]), span(t[5], t[5]), span(t[6], t[7])]
             squashed = "  squashed" if self.module.squashed[inst] else ""
             print(f"{text:24}" + "".join(f"{cell:>8}" for cell in cells) + squashed)
 

@@ -69,11 +69,6 @@ class Arch:
             [[False,0,0] for _ in range(rs_sizes[2])],
         ]
 
-        self.mem_inst: int = -1
-        self.mem_inst_pending: int = -1
-        self.mem_stage_rs: tuple[int, int] = (-1, -1)
-        self.mem_done: bool = True
-        self.mem_done_prev: bool = True
         self.mem_ctrl_inst: list[list[int]] = [[-1] * conf["load_store"]["num_rs"]]
         # [ocp, age, strt, done, op, [valid,addr], [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk], offset]
         self.mem_rs: list[list[bool|int|list[bool|int|float]]] = \
@@ -108,7 +103,7 @@ class Arch:
         self.ldst_done: list[bool] = [True] * len(self.ldst_isnt)
         self.ldst_done_prev: list[bool] = self.ldst_done.copy()
 
-    def stat_ex(self, inst_num: int) -> tuple[tuple[int, int], bool, tuple[int, int]]:
+    def stat_ex(self, inst_num: int) -> tuple[int, int]:
         available = (-1, -1)
         if inst_num >= 0:
             group = {OPCODES["nop"]: 0, OPCODES["beq"]: 0, OPCODES["bne"]: 0,
@@ -123,15 +118,7 @@ class Arch:
                         and not self.tm_ret[group][slot][0]):
                         available = (group, slot)
                         break
-        done = (-1, -1)
-        for group in range(len(self.ex_inst)):
-            for slot in range(len(self.ex_inst[group])):
-                if self.ex_inst[group][slot] != -1 and self.tm_ret[group][slot][0]:
-                    if done==(-1,-1) or self.tm_rs[group][slot][1]>self.tm_rs[done[0]][done[1]][1]:
-                        done = (group, slot)
-        if done != (-1, -1):
-            return available, True, done
-        return available, False, (-1, -1)
+        return available
 
     def issue(self, edge: bool, inst: int) -> bool:
         """Register an instruction and its current operands in a free RS."""
@@ -147,7 +134,7 @@ class Arch:
             sources = ((OPERAND_TYPES["none"], 0), self.inst[self.dyn[inst]][3]) if self.inst[self.dyn[inst]][0] == OPCODES["ld"] else (self.inst[self.dyn[inst]][1], self.inst[self.dyn[inst]][3])
             dest = self.inst[self.dyn[inst]][1] if self.inst[self.dyn[inst]][0] == OPCODES["ld"] else (OPERAND_TYPES["none"], 0)
         else:
-            group, slot = self.stat_ex(inst)[0]
+            group, slot = self.stat_ex(inst)
             if group == -1:
                 return False
             if self.inst[self.dyn[inst]][0] in (OPCODES["beq"], OPCODES["bne"]):
@@ -351,7 +338,7 @@ class Arch:
         return avail_idx
 
 
-    def mem_ctrl(self, mem_rdy: bool, age: bool|int|list[bool|int|float]) -> tuple[int, int]:
+    def mem_ctrl(self) -> tuple[int, int]:
         # [ocp, age, strt, done, op, [valid,addr], [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk], offset]
         ex_inst, ldst_mem, fwd = -1, -1, -1
 
@@ -362,7 +349,7 @@ class Arch:
         # sel mem idx
         if self.mem_idx == -1:
             for i in range(len(self.mem_rs)):
-                if (self.mem_idx==-1 or self.mem_rs[i][1]>self.mem_rs[self.mem_idx][1]) and self.mem_rs[i][0]==True and self.mem_rs[i][5]!=[False,0] and (self.mem_rs[i][2]==True or self.mem_rs[i][4]==OPCODES["sd"]) and self.mem_rs[i][3]==False and self.mem_rs[i][6]!=[False,0]:
+                if (self.mem_idx==-1 or self.mem_rs[i][1]>self.mem_rs[self.mem_idx][1]) and self.mem_rs[i][0]==True and self.mem_rs[i][5]!=[False,0] and self.mem_rs[i][2]==True and self.mem_rs[i][3]==False and self.mem_rs[i][6]!=[False,0]:
                     rdy = True
                     st_idx = -1
                     if self.mem_rs[i][4] == OPCODES["ld"]:
@@ -377,8 +364,6 @@ class Arch:
                         if st_idx != -1 and self.mem_rs[st_idx][6] == [False,0]:
                             rdy = False
                     if rdy == True:
-                        if (self.mem_rs[i][4]!=OPCODES["sd"] or self.mem_rs[i][2]==False) and (mem_rdy==False or age>self.mem_rs[i][1]):
-                            continue
                         self.mem_idx = i
                         fwd = st_idx
             if self.mem_idx != -1:
@@ -386,16 +371,15 @@ class Arch:
 
         # fin mem op
         if self.mem_idx != -1:
-            if self.mem_rs[self.mem_idx][4]!=OPCODES["sd"] or self.mem_rs[self.mem_idx][2]==False:
+            if self.mem_rs[self.mem_idx][4]==OPCODES["ld"]:
                 ldst_mem = self.ldst_isnt[self.mem_idx]
-            if (self.mem_rs[self.mem_idx][4]==OPCODES["sd"] and self.mem_rs[self.mem_idx][2]==False) or fwd!=-1 or self.mem_count>=self.mem_cycles:
+            if fwd!=-1 or self.mem_count>=self.mem_cycles:
                 if self.mem_rs[self.mem_idx][4] == OPCODES["ld"]:
                     self.mem_rs[self.mem_idx][6] = [True, self.mem_rs[fwd][6][1] if fwd!=-1 else self.mem[int(self.mem_rs[self.mem_idx][5][1]) // 4]]
-                if self.mem_rs[self.mem_idx][4]==OPCODES["sd"] and self.mem_rs[self.mem_idx][2]==True:
+                    self.mem_rs[self.mem_idx][3] = True
+                else:
                     # st done
                     self.mem[int(self.mem_rs[self.mem_idx][5][1]) // 4] = self.mem_rs[self.mem_idx][6][1]
-                self.mem_rs[self.mem_idx][3] = True
-                if self.mem_rs[self.mem_idx][4]==OPCODES["sd"] and self.mem_rs[self.mem_idx][2]==True:
                     self.free_rs(-1, self.mem_idx)
                 self.mem_idx = -1
                 self.mem_count = 0
@@ -469,10 +453,6 @@ class Arch:
                     self.mem_idx = -1
                     self.mem_count = 0
                 self.free_rs(-1, i)
-        if self.mem_inst > tag:
-            self.free_rs(*self.mem_stage_rs)
-            self.mem_inst = -1
-            self.mem_stage_rs = (-1, -1)
         if self.wb_inst > tag:
             if self.wb_rs[0] != -1:
                 self.free_rs(*self.wb_rs)
@@ -496,21 +476,11 @@ class Arch:
         self.mispredict = (-1, -1)
         return True
 
-    def memory_access(self, edge: bool) -> tuple[bool, int, int]:
+    def memory_access(self, edge: bool) -> tuple[int, int]:
         # mem stage
         if not edge:
-            return self.mem_done, -1, -1
-        _, ex_done, ex_done_id = self.stat_ex(-1)
-        ldst_ex, ldst_mem = self.mem_ctrl(self.mem_inst==-1, self.tm_rs[ex_done_id[0]][ex_done_id[1]][1] if ex_done else -1)
-
-        # sel ex to mem
-        if ex_done==True and self.mem_inst==-1 and ldst_mem==-1 and (self.mem_idx==-1 or (self.mem_rs[self.mem_idx][4]==OPCODES["sd"] and self.mem_rs[self.mem_idx][2]==True)):
-            group, slot = ex_done_id
-            self.mem_inst = self.ex_inst[group][slot]
-            self.mem_stage_rs = ex_done_id
-            self.ex_inst[group][slot] = -1
-            self.mem_done_prev=False
-        return self.mem_inst != -1, ldst_mem, ldst_ex
+            return -1, -1
+        return self.mem_ctrl()
 
     def write_back(self, edge: bool, inst: int) -> bool:
         """Receive the selected result once and hold its value for COMMIT."""
@@ -528,9 +498,6 @@ class Arch:
         if group == -1:
             if slot == -1:
                 return False
-            if self.inst[self.dyn[inst]][0] == OPCODES["sd"]:
-                self.rob[rob_idx][0] = True
-                return True
             self.wb_value = self.mem_rs[slot][6][1]
             self.free_rs(-1, slot)
         else:
@@ -608,6 +575,13 @@ class Arch:
                     self.tm_rs[group][slot][0] = False
                 self.wb_rs = (-1, -1)
                 self.wb_inst = -1
+            # st rdy to commit
+            for i in range(len(self.mem_rs)):
+                if self.mem_rs[i][0]==True and self.mem_rs[i][4]==OPCODES["sd"] and self.mem_rs[i][2]==False and self.mem_rs[i][5]!=[False,0] and self.mem_rs[i][6]!=[False,0]:
+                    for t in range(len(self.rob)):
+                        if self.rob[t][2] == self.ldst_isnt[i]:
+                            self.rob[t][0] = True
+                            break
             self.commit_inst = -1
             if self.rob[self.rob_head][0] == True:
                 self.commit_inst = self.rob[self.rob_head][2]
@@ -615,8 +589,14 @@ class Arch:
 
             # select oldest wb result
             if self.wb_inst == -1:
-                selected = self.mem_inst if self.mem_done_prev == True else -1
-                selected_rs = self.mem_stage_rs
+                selected = -1
+                selected_rs = (-1, -1)
+                for group in range(len(self.ex_inst)):
+                    for slot in range(len(self.ex_inst[group])):
+                        inst = self.ex_inst[group][slot]
+                        if inst != -1 and self.tm_ret[group][slot][0] == True and (selected == -1 or inst < selected):
+                            selected = inst
+                            selected_rs = (group, slot)
                 for i in range(len(self.mem_rs)):
                     inst = self.ldst_isnt[i]
                     if inst != -1 and self.mem_rs[i][3]==True:
@@ -630,8 +610,7 @@ class Arch:
                     self.wb_inst = selected
                     self.wb_rs = selected_rs
                     if selected_rs[0] != -1:
-                        self.mem_inst = -1
-                        self.mem_stage_rs = (-1, -1)
+                        self.ex_inst[selected_rs[0]][selected_rs[1]] = -1
                     self.wb_done=False
                     self.wb_done_prev=False
             if self.is_done_prev == True:
@@ -660,7 +639,7 @@ class Arch:
             if self.mem_rs[i][0]==True and self.mem_rs[i][4]==OPCODES["sd"] and self.mem_rs[i][2]==True and self.ldst_isnt[i]!=self.commit_inst:
                 commit_ret.append(self.ldst_isnt[i])
         self.wb_done = self.write_back(edge=rising_edge, inst=self.wb_inst)
-        self.mem_done, ldst_mem, ldst_ex = self.memory_access(edge=rising_edge)
+        ldst_ex, ldst_mem = self.memory_access(edge=rising_edge)
         self.ex_done = self.execute(edge=rising_edge)
 
         ex_ret = [[-1] * len(group) for group in self.ex_inst]
@@ -671,13 +650,12 @@ class Arch:
 
         self.is_done = self.issue(edge=rising_edge, inst=self.is_inst)
         ret = [True, self.is_inst if self.is_done == True else -1,\
-                ex_ret, [self.mem_inst if self.mem_done_prev == False else -1, ldst_mem],\
+                ex_ret, [ldst_mem],\
                 self.wb_inst if self.wb_done_prev == False else -1,\
                 commit_ret]
         
         self.is_done_prev = self.is_done 
         self.ex_done_prev = [group.copy() for group in self.ex_done]
-        self.mem_done_prev = self.mem_done
         self.wb_done_prev = self.wb_done
         self.commit_done_prev = self.commit_done
 
