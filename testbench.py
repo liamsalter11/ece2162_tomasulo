@@ -203,6 +203,7 @@ class Testbench:
 
         status = "TIMEOUT" if not self.module.finished() else "PASS" if passed else "FAIL"
         print(f"\n{self.clock_counter} cycles: {status}\n\n")
+        return status == "PASS"
 
     def ret_to_trace(self) -> None:
         self.ret_trace = [[0] * 8 for _ in self.module.dyn]
@@ -252,7 +253,8 @@ class Testbench:
 
 
 if __name__ == "__main__":
-    for filename in ["cat_1.asm", "cat_2.asm", "cat_5.asm"]:
+    all_passed = True
+    for filename in ["cat_1.asm", "cat_2.asm", "cat_3.asm", "cat_4.asm", "cat_5.asm", "cat_6.asm", "cat_extended.asm"]:
         tb = Testbench()
         tb.asm_loader(filename)
         tb.mem_loader("../default_mem.mem")
@@ -264,4 +266,8 @@ if __name__ == "__main__":
         while not tb.module.finished() and tb.clock_counter < MAX_CYCLES:
             tb.running()
         tb.post_proc()
-        tb.print_report()
+        passed = tb.print_report()
+        tb.csv_writer()
+        all_passed = all_passed and passed
+
+    print(f"All tests passed: {all_passed}")
