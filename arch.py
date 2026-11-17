@@ -93,9 +93,10 @@ class Arch:
         self.wb_done:  bool = True
         self.wb_done_prev: bool = True
 
-        # [valid, prf_idx/lsq_idx]
-        self.rob: list[list[bool | int]] = []
+        # [valid, prf_idx/lsq_idx, inst]
+        self.rob: list[list[bool | int]] = [[False,-1,-1] for _ in range(config["rob_entries"])]
         self.rob_head: int = 0
+        self.rob_tail: int = 0
 
         self.commit_inst: int = -1
         self.commit_inst_pending: int = -1
@@ -154,18 +155,20 @@ class Arch:
             else:
                 sources, dest = self.inst[self.dyn[inst]][2:4], self.inst[self.dyn[inst]][1]
 
+        rob_idx = (self.rob_tail - 1) % len(self.rob)
+
         # check avail prf
         if (dest[0] == OPERAND_TYPES["R"] and dest[1] != 0) or dest[0] == OPERAND_TYPES["F"]:
             for i in range(len(self.prf_r) if dest[0] == OPERAND_TYPES["R"] else len(self.prf_f)):
                 ocp = False
-                for t in range(self.rob_head, len(self.rob)):
-                    if self.squashed[t] == False and self.rob[t][1] == i and self.inst[self.dyn[t]][0] != OPCODES["sd"] and self.inst[self.dyn[t]][1][0] == dest[0]:
+                for t in range(len(self.rob)):
+                    if self.rob[t][2]!=-1 and self.rob[t][1] == i and self.inst[self.dyn[self.rob[t][2]]][0] != OPCODES["sd"] and self.inst[self.dyn[self.rob[t][2]]][1][0] == dest[0]:
                         ocp = True
                         break
                 if ocp == False:
-                    self.rob[inst][1] = i
+                    self.rob[rob_idx][1] = i
                     break
-            if self.rob[inst][1] == -1:
+            if self.rob[rob_idx][1] == -1:
                 return False
 
         # get source val
@@ -202,11 +205,11 @@ class Arch:
         # update dest prf & rat
         operand = dest
         if operand[0] == OPERAND_TYPES["R"] and operand[1] != 0:
-            self.rat_r[operand[1]] = inst
+            self.rat_r[operand[1]] = rob_idx
         if operand[0] == OPERAND_TYPES["F"]:
-            self.rat_f[operand[1]] = inst
+            self.rat_f[operand[1]] = rob_idx
         if self.inst[self.dyn[inst]][0] == OPCODES["sd"]:
-            self.rob[inst][1] = slot
+            self.rob[rob_idx][1] = slot
         if group == -1:
             self.ldst_isnt[slot] = inst
         else:
@@ -391,7 +394,6 @@ class Arch:
                 if self.mem_rs[self.mem_idx][4]==OPCODES["sd"] and self.mem_rs[self.mem_idx][2]==True:
                     # st done
                     self.mem[int(self.mem_rs[self.mem_idx][5][1]) // 4] = self.mem_rs[self.mem_idx][6][1]
-                    self.rob[self.ldst_isnt[self.mem_idx]][1] = -1
                 self.mem_rs[self.mem_idx][3] = True
                 if self.mem_rs[self.mem_idx][4]==OPCODES["sd"] and self.mem_rs[self.mem_idx][2]==True:
                     self.free_rs(-1, self.mem_idx)
@@ -428,7 +430,7 @@ class Arch:
     def finished(self) -> bool:
         # inst & st done
         return (self.pc >= len(self.inst) and self.mispredict == (-1, -1)
-                and all(self.squashed[self.rob_head:])
+                and all(self.rob[i][2]==-1 for i in range(len(self.rob)))
                 and all(inst == -1 for inst in self.ldst_isnt))
 
     def free_rs(self, group: int, slot: int) -> None:
@@ -449,7 +451,11 @@ class Arch:
 
         for t in range(tag + 1, len(self.dyn)):
             self.squashed[t] = True
-            self.rob[t][1] = -1
+        for i in range(len(self.rob)):
+            if self.rob[i][2] == tag:
+                self.rob_tail = (i + 1) % len(self.rob)
+            elif self.rob[i][2] > tag:
+                self.rob[i] = [False,-1,-1]
         for group in range(len(self.ex_inst)):
             for slot in range(len(self.ex_inst[group])):
                 if self.ex_inst[group][slot] > tag:
@@ -476,10 +482,11 @@ class Arch:
 
         self.rat_r = [-1] * len(self.arf_r)
         self.rat_f = [-1] * len(self.arf_f)
-        for t in range(self.rob_head, tag + 1):
-            if self.squashed[t] == True or self.rob[t][1] == -1 or self.inst[self.dyn[t]][0] == OPCODES["sd"]:
+        for i in range(len(self.rob)):
+            t = (self.rob_head + i) % len(self.rob)
+            if self.rob[t][2]==-1 or self.rob[t][1] == -1 or self.inst[self.dyn[self.rob[t][2]]][0] == OPCODES["sd"]:
                 continue
-            operand = self.inst[self.dyn[t]][1]
+            operand = self.inst[self.dyn[self.rob[t][2]]][1]
             if operand[0] == OPERAND_TYPES["R"] and operand[1] != 0:
                 self.rat_r[operand[1]] = t
             if operand[0] == OPERAND_TYPES["F"]:
@@ -514,12 +521,15 @@ class Arch:
         if self.wb_done == True:
             return True
 
+        rob_idx = 0
+        while self.rob[rob_idx][2] != inst:
+            rob_idx += 1
         group, slot = self.wb_rs
         if group == -1:
             if slot == -1:
                 return False
             if self.inst[self.dyn[inst]][0] == OPCODES["sd"]:
-                self.rob[inst][0] = True
+                self.rob[rob_idx][0] = True
                 return True
             self.wb_value = self.mem_rs[slot][6][1]
             self.free_rs(-1, slot)
@@ -529,13 +539,13 @@ class Arch:
             self.wb_value = self.tm_ret[group][slot][1]
             self.tm_ret[group][slot][0] = False
 
-        if self.rob[inst][1] != -1:
+        if self.rob[rob_idx][1] != -1:
             operand = self.inst[self.dyn[inst]][1]
             if operand[0] == OPERAND_TYPES["R"]:
-                self.prf_r[self.rob[inst][1]] = self.wb_value
+                self.prf_r[self.rob[rob_idx][1]] = self.wb_value
             if operand[0] == OPERAND_TYPES["F"]:
-                self.prf_f[self.rob[inst][1]] = self.wb_value
-        self.rob[inst][0] = True
+                self.prf_f[self.rob[rob_idx][1]] = self.wb_value
+        self.rob[rob_idx][0] = True
         return True
 
     def commit(self, edge: bool, inst: int) -> bool:
@@ -545,20 +555,20 @@ class Arch:
         if inst != -1:
             if self.inst[self.dyn[inst]][0] == OPCODES["sd"]:
                 # st strt
-                self.mem_rs[self.rob[inst][1]][2] = True
-                self.mem_rs[self.rob[inst][1]][3] = False
-            elif self.rob[inst][1] != -1:
+                self.mem_rs[self.rob[self.rob_head][1]][2] = True
+                self.mem_rs[self.rob[self.rob_head][1]][3] = False
+            elif self.rob[self.rob_head][1] != -1:
                 operand = self.inst[self.dyn[inst]][1]
                 if operand[0] == OPERAND_TYPES["R"]:
-                    self.arf_r[operand[1]] = self.prf_r[self.rob[inst][1]]
-                    if self.rat_r[operand[1]] == inst:
+                    self.arf_r[operand[1]] = self.prf_r[self.rob[self.rob_head][1]]
+                    if self.rat_r[operand[1]] == self.rob_head:
                         self.rat_r[operand[1]] = -1
                 if operand[0] == OPERAND_TYPES["F"]:
-                    self.arf_f[operand[1]] = self.prf_f[self.rob[inst][1]]
-                    if self.rat_f[operand[1]] == inst:
+                    self.arf_f[operand[1]] = self.prf_f[self.rob[self.rob_head][1]]
+                    if self.rat_f[operand[1]] == self.rob_head:
                         self.rat_f[operand[1]] = -1
-                self.rob[inst][1] = -1
-            self.rob_head += 1
+            self.rob[self.rob_head] = [False,-1,-1]
+            self.rob_head = (self.rob_head + 1) % len(self.rob)
         return inst != -1
 
     def module(self, rising_edge):
@@ -566,6 +576,9 @@ class Arch:
         if rising_edge == True:
             recovering = self.recover()
             if self.wb_done_prev == True and self.wb_rs != (-1, -1):
+                rob_idx = 0
+                while self.rob[rob_idx][2] != self.wb_inst:
+                    rob_idx += 1
                 operand = self.inst[self.dyn[self.wb_inst]][1]
                 for group in range(len(self.tm_rs)):
                     for slot in range(len(self.tm_rs[group])):
@@ -574,9 +587,9 @@ class Arch:
                         sources = self.inst[self.dyn[self.ex_inst[group][slot]]][1:3] if self.inst[self.dyn[self.ex_inst[group][slot]]][0] in (OPCODES["beq"], OPCODES["bne"]) else self.inst[self.dyn[self.ex_inst[group][slot]]][2:4]
                         for i in range(2):
                             if (self.inst[self.dyn[self.wb_inst]][0] != OPCODES["sd"]
-                                and self.rob[self.wb_inst][1] != -1
+                                and self.rob[rob_idx][1] != -1
                                 and self.tm_rs[group][slot][i + 4] == [False, 0]
-                                and self.tm_rs[group][slot][i + 6] == [1, self.rob[self.wb_inst][1]]
+                                and self.tm_rs[group][slot][i + 6] == [1, self.rob[rob_idx][1]]
                                 and sources[i][0] == operand[0]):
                                 self.tm_rs[group][slot][i + 4] = [True, self.wb_value]
                 # update mem rs sources
@@ -585,9 +598,9 @@ class Arch:
                         continue
                     for i in range(2):
                         if (self.inst[self.dyn[self.wb_inst]][0] != OPCODES["sd"]
-                            and self.rob[self.wb_inst][1] != -1
+                            and self.rob[rob_idx][1] != -1
                             and self.mem_rs[slot][i + 6] == [False, 0]
-                            and self.mem_rs[slot][i + 8] == [1, self.rob[self.wb_inst][1]]
+                            and self.mem_rs[slot][i + 8] == [1, self.rob[rob_idx][1]]
                             and operand[0] == (OPERAND_TYPES["F"] if i == 0 else OPERAND_TYPES["R"])):
                             self.mem_rs[slot][i + 6] = [True, self.wb_value]
                 group, slot = self.wb_rs
@@ -596,10 +609,8 @@ class Arch:
                 self.wb_rs = (-1, -1)
                 self.wb_inst = -1
             self.commit_inst = -1
-            while self.rob_head < len(self.rob) and self.squashed[self.rob_head]:
-                self.rob_head += 1
-            if self.rob_head < len(self.rob) and self.rob[self.rob_head][0] == True:
-                self.commit_inst = self.rob_head
+            if self.rob[self.rob_head][0] == True:
+                self.commit_inst = self.rob[self.rob_head][2]
                 self.commit_done_prev=False
 
             # select oldest wb result
@@ -608,10 +619,13 @@ class Arch:
                 selected_rs = self.mem_stage_rs
                 for i in range(len(self.mem_rs)):
                     inst = self.ldst_isnt[i]
-                    if inst != -1 and self.mem_rs[i][3]==True and self.rob[inst][0]==False:
-                        if selected == -1 or inst < selected:
-                            selected = inst
-                            selected_rs = (-1, i)
+                    if inst != -1 and self.mem_rs[i][3]==True:
+                        for t in range(len(self.rob)):
+                            if self.rob[t][2]==inst and self.rob[t][0]==False:
+                                if selected == -1 or inst < selected:
+                                    selected = inst
+                                    selected_rs = (-1, i)
+                                break
                 if selected != -1:
                     self.wb_inst = selected
                     self.wb_rs = selected_rs
@@ -622,11 +636,12 @@ class Arch:
                     self.wb_done_prev=False
             if self.is_done_prev == True:
                 self.is_inst = -1
-            if self.is_inst == -1 and self.pc < len(self.inst) and not recovering:
+            if self.is_inst == -1 and self.pc < len(self.inst) and not recovering and self.rob[self.rob_tail][2]==-1:
                 self.is_inst = len(self.dyn)
                 self.dyn.append(self.pc)
                 self.squashed.append(False)
-                self.rob.append([False, -1])
+                self.rob[self.rob_tail] = [False,-1,self.is_inst]
+                self.rob_tail = (self.rob_tail + 1) % len(self.rob)
                 next_pc = self.pc + 1
 
                 # Check for branch instruction
