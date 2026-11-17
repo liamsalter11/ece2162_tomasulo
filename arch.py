@@ -69,6 +69,7 @@ class Arch:
             [[False,0,0] for _ in range(rs_sizes[2])],
         ]
 
+        self.nop_mem: list[int] = []
         self.mem_ctrl_inst: list[list[int]] = [[-1] * conf["load_store"]["num_rs"]]
         # [ocp, age, strt, done, op, [valid,addr], [valid,Vj], [valid,Vk], [pos,Qj], [pos,Qk], offset]
         self.mem_rs: list[list[bool|int|list[bool|int|float]]] = \
@@ -476,11 +477,19 @@ class Arch:
         self.mispredict = (-1, -1)
         return True
 
-    def memory_access(self, edge: bool) -> tuple[int, int]:
+    def memory_access(self, edge: bool) -> tuple[int, int, int]:
         # mem stage
         if not edge:
-            return -1, -1
-        return self.mem_ctrl()
+            return -1, -1, -1
+        # nop bubble
+        nop_mem = -1
+        for slot in range(len(self.ex_inst[0])):
+            inst = self.ex_inst[0][slot]
+            if inst != -1 and self.tm_ret[0][slot][0] == True and self.inst[self.dyn[inst]][0] == OPCODES["nop"] and inst not in self.nop_mem:
+                nop_mem = inst
+                self.nop_mem.append(inst)
+        ldst_ex, ldst_mem = self.mem_ctrl()
+        return ldst_ex, ldst_mem, nop_mem
 
     def write_back(self, edge: bool, inst: int) -> bool:
         """Receive the selected result once and hold its value for COMMIT."""
@@ -594,7 +603,8 @@ class Arch:
                 for group in range(len(self.ex_inst)):
                     for slot in range(len(self.ex_inst[group])):
                         inst = self.ex_inst[group][slot]
-                        if inst != -1 and self.tm_ret[group][slot][0] == True and (selected == -1 or inst < selected):
+                        if inst != -1 and self.tm_ret[group][slot][0] == True and (selected == -1 or inst < selected) \
+                            and (self.inst[self.dyn[inst]][0] != OPCODES["nop"] or inst in self.nop_mem):
                             selected = inst
                             selected_rs = (group, slot)
                 for i in range(len(self.mem_rs)):
@@ -639,7 +649,7 @@ class Arch:
             if self.mem_rs[i][0]==True and self.mem_rs[i][4]==OPCODES["sd"] and self.mem_rs[i][2]==True and self.ldst_isnt[i]!=self.commit_inst:
                 commit_ret.append(self.ldst_isnt[i])
         self.wb_done = self.write_back(edge=rising_edge, inst=self.wb_inst)
-        ldst_ex, ldst_mem = self.memory_access(edge=rising_edge)
+        ldst_ex, ldst_mem, nop_mem = self.memory_access(edge=rising_edge)
         self.ex_done = self.execute(edge=rising_edge)
 
         ex_ret = [[-1] * len(group) for group in self.ex_inst]
@@ -650,7 +660,7 @@ class Arch:
 
         self.is_done = self.issue(edge=rising_edge, inst=self.is_inst)
         ret = [True, self.is_inst if self.is_done == True else -1,\
-                ex_ret, [ldst_mem],\
+                ex_ret, [ldst_mem, nop_mem],\
                 self.wb_inst if self.wb_done_prev == False else -1,\
                 commit_ret]
         
