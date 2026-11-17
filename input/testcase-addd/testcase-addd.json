@@ -1,0 +1,30 @@
+{
+  "functional_units": {
+    "integer": {
+      "num_rs": 4,
+      "ex_cycles": 1,
+      "mem_cycles": 0,
+      "num_fus": 1
+    },
+    "floating_point_add": {
+      "num_rs": 3,
+      "ex_cycles": 4,
+      "mem_cycles": 0,
+      "num_fus": 1
+    },
+    "floating_point_mul": {
+      "num_rs": 2,
+      "ex_cycles": 15,
+      "mem_cycles": 0,
+      "num_fus": 1
+    },
+    "load_store": {
+      "num_rs": 5,
+      "ex_cycles": 1,
+      "mem_cycles": 5,
+      "num_fus": 1
+    }
+  },
+  "rob_entries": 64,
+  "cdb_buffer_entries": 1
+}
