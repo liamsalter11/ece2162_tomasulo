@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="297mm" height="156.6mm" viewBox="0 0 2200 1160" role="img" aria-labelledby="title desc">
-  <title id="title">현재 Arch 모듈 구조</title>
-  <desc id="desc">arch.py의 명령·결과 경로, CDB 되먹임, 제어 경로를 나타낸 벡터 도식. ISSUE, 세 산술 EX 그룹, memory_access와 mem_ctrl, 단일 WB, COMMIT, ARF/RAT/PRF, 고정 순환 ROB, 분기 복구를 포함한다. 숫자는 default_config.json의 기본 설정이다. 제어 호출 순서는 데이터 흐름 순서와 다르다.</desc>
+  <title id="title">Arch Module - ls_timing</title>
+  <desc id="desc">Vector diagram of arch.py at ls_timing commit 6cff9b8. Arithmetic and branch results go from EX to WB. NOP keeps a one-cycle MEM bubble. mem_ctrl owns LD/SD address calculation and the single memory port. SD bypasses MEM and WB before COMMIT; its memory write is enabled by COMMIT. One WB value broadcasts on the CDB in the next cycle. Shared state includes ARF, RAT, PRF, a circular ROB, and branch recovery. Resource counts use default_config.json. Red numbers show method call order.</desc>
   <rect x="10" y="10" width="2180" height="1140" rx="22" fill="#ffffff" stroke="#000000" stroke-width="5"/>
   <g font-family="Arial" fill="#000000" text-anchor="middle">
-    <text text-anchor="middle" font-family="Arial" x="1100" y="68" font-size="44" font-weight="700">현재 Arch 모듈 구조</text>
+    <text text-anchor="middle" font-family="Arial" x="1100" y="68" font-size="44" font-weight="700">Arch Module - ls_timing</text>
 
     <!-- Arch boundary and cycle control. -->
     <rect x="300" y="105" width="1870" height="975" rx="22" fill="#ccecff" stroke="#000000" stroke-width="4"/>
@@ -42,7 +42,7 @@
     <text text-anchor="middle" font-family="Arial" x="147" y="449" font-size="27">config</text>
     <text text-anchor="middle" font-family="Arial" x="147" y="516" font-size="22">rising_edge</text>
     <rect x="35" y="840" width="225" height="195" fill="#ccecff" stroke="#000000" stroke-width="4"/>
-    <text text-anchor="middle" font-family="Arial" x="147" y="884" font-size="26" font-weight="700">초기 상태</text>
+    <text text-anchor="middle" font-family="Arial" x="147" y="884" font-size="26" font-weight="700">Initial state</text>
     <text text-anchor="middle" font-family="Arial" x="147" y="931" font-size="24">arf_r / arf_f</text>
     <text text-anchor="middle" font-family="Arial" x="147" y="980" font-size="24">mem</text>
 
@@ -97,18 +97,16 @@
     </g>
     <text text-anchor="middle" font-family="Arial" x="832" y="681" font-size="17">tm_rs / tm_count / tm_ret</text>
 
-    <!-- MEM arbitration owns the LD/ST controller call, not its work. -->
+    <!-- MEM preserves the NOP bubble and calls the LD/SD controller. -->
     <rect x="1090" y="398" width="400" height="68" fill="#e8ffd9" stroke="#000000" stroke-width="3"/>
-    <text text-anchor="middle" font-family="Arial" x="1290" y="441" font-size="25" font-weight="700">age 중재 / mem_inst</text>
+    <text text-anchor="middle" font-family="Arial" x="1290" y="427" font-size="25" font-weight="700">NOP bubble: 1 cycle</text>
+    <text text-anchor="middle" font-family="Arial" x="1290" y="453" font-size="21">nop_mem / WB enable</text>
     <rect x="1090" y="489" width="400" height="179" fill="#e8ffd9" stroke="#000000" stroke-width="3"/>
     <text text-anchor="middle" font-family="Arial" x="1290" y="525" font-size="27" font-weight="700">mem_ctrl()</text>
-    <text text-anchor="middle" font-family="Arial" x="1290" y="562" font-size="23">mem_rs (3) / forwarding</text>
-    <text text-anchor="middle" font-family="Arial" x="1290" y="603" font-size="23">주소 EX=1 → LD/ST=4</text>
-    <text text-anchor="middle" font-family="Arial" x="1290" y="642" font-size="22">mem_ex_idx / mem_idx</text>
-    <g stroke="#ff0000" stroke-width="3" fill="#ff0000">
-      <path d="M 1290,466 V 479" fill="none"/>
-      <path d="M 1290,488 L 1282,475 H 1298 Z"/>
-    </g>
+    <text text-anchor="middle" font-family="Arial" x="1290" y="557" font-size="23">mem_rs (3): LD / SD</text>
+    <text text-anchor="middle" font-family="Arial" x="1290" y="590" font-size="23">Address EX=1 / access=4</text>
+    <text text-anchor="middle" font-family="Arial" x="1290" y="621" font-size="22">LD forwarding: 1 cycle</text>
+    <text text-anchor="middle" font-family="Arial" x="1290" y="650" font-size="22">SD write: COMMIT only</text>
 
     <!-- Single WB value and in-order commit. -->
     <g fill="#e8ffd9" stroke="#000000" stroke-width="3">
@@ -119,37 +117,51 @@
     </g>
     <text text-anchor="middle" font-family="Arial" x="1675" y="437" font-size="25" font-weight="700">wb_value</text>
     <text text-anchor="middle" font-family="Arial" x="1675" y="475" font-size="22">PRF write</text>
-    <text text-anchor="middle" font-family="Arial" x="1675" y="580" font-size="25" font-weight="700">ROB ready</text>
-    <text text-anchor="middle" font-family="Arial" x="1675" y="617" font-size="22">wb_inst (1)</text>
+    <text text-anchor="middle" font-family="Arial" x="1675" y="580" font-size="25" font-weight="700">Oldest ready</text>
+    <text text-anchor="middle" font-family="Arial" x="1675" y="617" font-size="20">ALU / LD / NOP</text>
+    <text text-anchor="middle" font-family="Arial" x="1675" y="681" font-size="17">wb_inst (1) / ROB ready</text>
     <text text-anchor="middle" font-family="Arial" x="1985" y="437" font-size="25" font-weight="700">ROB head</text>
-    <text text-anchor="middle" font-family="Arial" x="1985" y="475" font-size="23">PRF → ARF</text>
+    <text text-anchor="middle" font-family="Arial" x="1985" y="475" font-size="23">PRF to ARF</text>
     <text text-anchor="middle" font-family="Arial" x="1985" y="580" font-size="25" font-weight="700">SD: strt=True</text>
-    <text text-anchor="middle" font-family="Arial" x="1985" y="617" font-size="23">ROB 반환</text>
+    <text text-anchor="middle" font-family="Arial" x="1985" y="617" font-size="23">Release ROB slot</text>
+    <text text-anchor="middle" font-family="Arial" x="1985" y="681" font-size="18">SD ready: address + data</text>
 
     <!-- Main instruction/result arrows. -->
     <g fill="#0000ff" stroke="#000000" stroke-width="3">
       <path d="M 260,454 H 312 V 442 L 340,470 L 312,498 V 486 H 260 Z"/>
       <path d="M 600,454 H 623 V 442 L 650,470 L 623,498 V 486 H 600 Z"/>
-      <path d="M 1015,454 H 1042 V 442 L 1070,470 L 1042,498 V 486 H 1015 Z"/>
-      <path d="M 1510,454 H 1537 V 442 L 1565,470 L 1537,498 V 486 H 1510 Z"/>
+      <path id="nop-to-mem" d="M 1015,424 H 1070 V 416 L 1090,432 L 1070,448 V 440 H 1015 Z"/>
+      <path id="ld-nop-to-wb" d="M 1510,454 H 1537 V 442 L 1565,470 L 1537,498 V 486 H 1510 Z"/>
       <path d="M 260,922 H 280 V 910 L 300,938 L 280,966 V 954 H 260 Z"/>
     </g>
+    <text text-anchor="middle" font-family="Arial" x="1048" y="410" font-size="17" font-weight="700">NOP</text>
+    <text text-anchor="middle" font-family="Arial" x="1537" y="415" font-size="16" font-weight="700">LD /</text>
+    <text text-anchor="middle" font-family="Arial" x="1537" y="435" font-size="16" font-weight="700">NOP</text>
 
-    <!-- LD/ST allocation bypasses the arithmetic EX groups. -->
+    <!-- LD/SD allocation bypasses the arithmetic EX groups. -->
     <path d="M 600,625 H 625 V 716 H 1045 V 635 H 1079" fill="none" stroke="#000000" stroke-width="17" stroke-linejoin="round"/>
     <path d="M 600,625 H 625 V 716 H 1045 V 635 H 1079" fill="none" stroke="#0000ff" stroke-width="11" stroke-linejoin="round"/>
     <path d="M 1090,635 L 1071,620 V 650 Z" fill="#0000ff" stroke="#000000" stroke-width="2"/>
-    <rect x="773" y="704" width="125" height="27" fill="#ccecff"/>
-    <text text-anchor="middle" font-family="Arial" x="835" y="726" font-size="20" font-weight="700">LD / ST</text>
+    <rect x="673" y="704" width="125" height="27" fill="#ccecff"/>
+    <text text-anchor="middle" font-family="Arial" x="735" y="726" font-size="20" font-weight="700">LD / SD</text>
+
+    <!-- Arithmetic and branch results request WB without a MEM stage. -->
+    <path d="M 1015,540 H 1030 V 735 H 1545 V 620 H 1555" fill="none" stroke="#ffffff" stroke-width="23" stroke-linejoin="round"/>
+    <path d="M 1015,540 H 1030 V 735 H 1545 V 620 H 1555" fill="none" stroke="#000000" stroke-width="17" stroke-linejoin="round"/>
+    <path id="ex-to-wb" d="M 1015,540 H 1030 V 735 H 1545 V 620 H 1555" fill="none" stroke="#0000ff" stroke-width="11" stroke-linejoin="round"/>
+    <path d="M 1565,620 L 1547,605 V 635 Z" fill="#0000ff" stroke="#000000" stroke-width="2"/>
+    <rect x="1039" y="706" width="202" height="27" fill="#ccecff"/>
+    <text text-anchor="middle" font-family="Arial" x="1140" y="727" font-size="18" font-weight="700">ALU / branch to WB</text>
 
     <!-- Prior WB value broadcasts once, to both RS families. -->
     <path d="M 1730,690 V 755 H 832 V 711" fill="none" stroke="#000000" stroke-width="14" stroke-linejoin="round"/>
     <path d="M 1730,690 V 755 H 832 V 711" fill="none" stroke="#b7dde8" stroke-width="9" stroke-linejoin="round"/>
     <path d="M 832,690 L 818,713 H 846 Z" fill="#b7dde8" stroke="#000000" stroke-width="2"/>
+    <path d="M 1260,755 V 711" fill="none" stroke="#ffffff" stroke-width="22"/>
     <path d="M 1260,755 V 711" fill="none" stroke="#000000" stroke-width="14"/>
     <path d="M 1260,755 V 711" fill="none" stroke="#b7dde8" stroke-width="9"/>
     <path d="M 1260,690 L 1246,713 H 1274 Z" fill="#b7dde8" stroke="#000000" stroke-width="2"/>
-    <text text-anchor="middle" font-family="Arial" x="1080" y="793" font-size="24" font-weight="700">CDB: wb_value · 다음 사이클</text>
+    <text text-anchor="middle" font-family="Arial" x="1080" y="793" font-size="24" font-weight="700">CDB: wb_value / next cycle</text>
 
     <!-- Shared state: committed/register alias state. -->
     <rect x="340" y="860" width="550" height="175" fill="#e8ffd9" stroke="#000000" stroke-width="3"/>
@@ -190,7 +202,7 @@
     <text text-anchor="middle" font-family="Arial" x="1675" y="948" font-size="23">prf_r[256]</text>
     <text text-anchor="middle" font-family="Arial" x="1675" y="990" font-size="23">prf_f[256]</text>
     <text text-anchor="middle" font-family="Arial" x="1985" y="902" font-size="28" font-weight="700">ROB (128)</text>
-    <text text-anchor="middle" font-family="Arial" x="1985" y="943" font-size="21">valid / dst / inst</text>
+    <text text-anchor="middle" font-family="Arial" x="1985" y="943" font-size="21">ready / dst / tag</text>
     <text text-anchor="middle" font-family="Arial" x="1985" y="977" font-size="21">rob_head / rob_tail</text>
     <g fill="#ccecff" stroke="#000000" stroke-width="2">
       <rect x="1870" y="995" width="42" height="22"/>
@@ -220,7 +232,7 @@
 
     <!-- COMMIT authorizes SD; writing stays inside mem_ctrl. -->
     <path d="M 2040,690 V 815 H 1528 V 620 H 1520" fill="none" stroke="#ffffff" stroke-width="10" stroke-linejoin="round"/>
-    <path d="M 2040,690 V 815 H 1528 V 620 H 1520" fill="none" stroke="#ff0000" stroke-width="3" stroke-linejoin="round"/>
+    <path id="sd-commit-enable" d="M 2040,690 V 815 H 1528 V 620 H 1520" fill="none" stroke="#ff0000" stroke-width="3" stroke-linejoin="round"/>
     <path d="M 1510,620 L 1527,610 V 630 Z" fill="#ff0000"/>
     <rect x="1828" y="799" width="65" height="31" fill="#ccecff"/>
     <text text-anchor="middle" font-family="Arial" x="1860" y="822" font-size="23" fill="#c00000">strt</text>
@@ -230,18 +242,18 @@
     <path d="M 2130,470 H 2150 V 1058 H 477 V 1048" fill="none" stroke="#b7dde8" stroke-width="9" stroke-linejoin="round"/>
     <path d="M 477,1035 L 463,1057 H 491 Z" fill="#b7dde8" stroke="#000000" stroke-width="2"/>
     <rect x="1162" y="1045" width="150" height="28" fill="#ccecff"/>
-    <text text-anchor="middle" font-family="Arial" x="1237" y="1066" font-size="19">COMMIT → ARF</text>
+    <text text-anchor="middle" font-family="Arial" x="1237" y="1066" font-size="19">COMMIT to ARF</text>
 
     <!-- Compact legend and source identity; no personal metadata. -->
     <g font-size="20" text-anchor="start">
       <path d="M 350,1115 H 401 V 1107 L 419,1119 L 401,1131 V 1123 H 350 Z" fill="#0000ff" stroke="#000000" stroke-width="2"/>
-      <text text-anchor="start" font-family="Arial" x="433" y="1125">명령·결과</text>
+      <text text-anchor="start" font-family="Arial" x="433" y="1125">Instruction / result</text>
       <path d="M 700,1115 H 751 V 1107 L 769,1119 L 751,1131 V 1123 H 700 Z" fill="#b7dde8" stroke="#000000" stroke-width="2"/>
-      <text text-anchor="start" font-family="Arial" x="783" y="1125">되먹임 / CDB</text>
+      <text text-anchor="start" font-family="Arial" x="783" y="1125">Feedback / CDB</text>
       <path d="M 1110,1119 H 1165" stroke="#ff0000" stroke-width="3"/>
       <path d="M 1178,1119 L 1162,1110 V 1128 Z" fill="#ff0000"/>
-      <text text-anchor="start" font-family="Arial" x="1192" y="1125">제어 / 복구 (1–5: 호출 순서)</text>
+      <text text-anchor="start" font-family="Arial" x="1192" y="1125">Control / recovery (1-5: call order)</text>
     </g>
-    <text font-family="Arial" x="2130" y="1125" font-size="19" text-anchor="end">arch.py @ 7831647 · 기본 설정</text>
+    <text font-family="Arial" x="2130" y="1125" font-size="19" text-anchor="end">ls_timing @ 6cff9b8 / defaults</text>
   </g>
 </svg>
