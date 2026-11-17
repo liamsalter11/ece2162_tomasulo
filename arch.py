@@ -229,10 +229,11 @@ class Arch:
 
         # sel addi idx
         addi_idx: int = -1
-        for i in range(len(self.tm_rs[0])):
-            if self.tm_rs[0][i][0]==True and self.tm_rs[0][i][2]==False and self.tm_ret[0][i][0]==False and self.tm_rs[0][i][4][0]==True and self.tm_rs[0][i][5][0]==True:
-                if addi_idx==-1 or self.tm_rs[0][i][1]>self.tm_rs[0][addi_idx][1]:
-                    addi_idx = i
+        if any(self.tm_rs[0][i][2] for i in range(len(self.tm_rs[0]))) == False:
+            for i in range(len(self.tm_rs[0])):
+                if self.tm_rs[0][i][0]==True and self.tm_rs[0][i][2]==False and self.tm_ret[0][i][0]==False and self.tm_rs[0][i][4][0]==True and self.tm_rs[0][i][5][0]==True:
+                    if addi_idx==-1 or self.tm_rs[0][i][1]>self.tm_rs[0][addi_idx][1]:
+                        addi_idx = i
         for i in range(len(self.tm_rs[0])):
             if self.tm_ret[0][i][0] == True:
                 # pending. wait for consume result
@@ -249,7 +250,7 @@ class Arch:
                     self.tm_ret[0][i] = [False, 0]
             else:
                 if  self.tm_count[0][i] < self.tm_cycles[0]:
-                    # calculating
+                    # cal
                     self.tm_count[0][i] += 1
                     self.tm_ret[0][i] = [False, 0]
             if self.tm_count[0][i] >= self.tm_cycles[0]:
