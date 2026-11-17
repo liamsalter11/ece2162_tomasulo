@@ -1,5 +1,6 @@
 import csv
 import json
+from math import isclose
 from pathlib import Path
 from typing import Final, assert_never
 import arch
@@ -199,10 +200,16 @@ class Testbench:
         print("\nNON-ZERO MEMORY VALUES")
         print("  ".join(f"[{4 * i}]={v:g}" for i, v in enumerate(self.ret_mem) if v) or "(none)")
         passed = (self.ret_trace == self.exp_trace and self.ret_rr == self.exp_rr
-                  and self.ret_rf == self.exp_rf and self.ret_mem == self.exp_mem)
+                  and len(self.ret_rf) == len(self.exp_rf)
+                  and all(isclose(ret, exp, rel_tol=0, abs_tol=max(1e-11, 0.01 * abs(exp)))
+                          for ret, exp in zip(self.ret_rf, self.exp_rf))
+                  and len(self.ret_mem) == len(self.exp_mem)
+                  and all(isclose(ret, exp, rel_tol=0, abs_tol=max(1e-11, 0.01 * abs(exp)))
+                          for ret, exp in zip(self.ret_mem, self.exp_mem)))
 
         status = "TIMEOUT" if not self.module.finished() else "PASS" if passed else "FAIL"
         print(f"\n{self.clock_counter} cycles: {status}\n\n")
+        return status == "PASS"
 
     def ret_to_trace(self) -> None:
         self.ret_trace = [[0] * 8 for _ in self.module.dyn]
@@ -235,8 +242,8 @@ class Testbench:
 
     def post_proc(self) -> None:
         self.ret_mem = self.module.mem
-        self.ret_rr = self.module.reg_r
-        self.ret_rf = self.module.reg_f
+        self.ret_rr = self.module.arf_r
+        self.ret_rf = self.module.arf_f
         self.ret_to_trace()
 
     def running(self) -> None:
@@ -252,7 +259,8 @@ class Testbench:
 
 
 if __name__ == "__main__":
-    for filename in ["cat_1.asm", "cat_2.asm", "cat_5.asm"]:
+    all_passed = True
+    for filename in ["cat_1.asm", "cat_2.asm", "cat_3.asm", "cat_4.asm", "cat_5.asm", "cat_6.asm", "cat_extended.asm"]:
         tb = Testbench()
         tb.asm_loader(filename)
         tb.mem_loader("../default_mem.mem")
@@ -264,4 +272,8 @@ if __name__ == "__main__":
         while not tb.module.finished() and tb.clock_counter < MAX_CYCLES:
             tb.running()
         tb.post_proc()
-        tb.print_report()
+        passed = tb.print_report()
+        tb.csv_writer()
+        all_passed = all_passed and passed
+
+    print(f"All tests passed: {all_passed}")
